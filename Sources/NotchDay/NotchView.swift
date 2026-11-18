@@ -3,19 +3,20 @@ import SwiftUI
 
 struct NotchView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pageDirection: CGFloat = 1
 
     let model: NotchModel
     let calendar: CalendarFeed
+    let activity: ActivityFeed
     let sizing: NotchSizing
     let toggleExpanded: () -> Void
     let seekingChanged: (Bool) -> Void
     let playbackChanged: () -> Void
+    let selectPage: (NotchPage) -> Void
 
     private var expanded: Bool { model.mode == .expanded }
     private var locked: Bool { model.mode == .locked }
     private var coverVisible: Bool {
-        expanded ? model.page == .music : model.isPlaying && !locked
+        expanded ? model.page == .music : model.showsCompactPlayback && !locked
     }
 
     private var shapeAnimation: Animation? {
@@ -24,19 +25,18 @@ struct NotchView: View {
     }
 
     private var contentAnimation: Animation {
-        .easeInOut(duration: reduceMotion ? 0.09 : 0.17)
+        if !model.desktopWingsVisible { return .easeOut(duration: 0.10) }
+        return .easeInOut(duration: reduceMotion ? 0.09 : 0.17)
             .delay(expanded && !reduceMotion ? 0.065 : 0)
     }
 
     var body: some View {
-        let shoulder = sizing.shoulder(for: model.mode)
-        let width = locked
-            ? LockBadgeMotion.bodyWidth(for: sizing, revealed: model.lockPreviewRevealed, reduceMotion: reduceMotion)
-            : sizing.bodyWidth(for: model.mode, playing: model.isPlaying)
+        let shoulder = model.desktopWingsVisible ? sizing.shoulder(for: model.mode) : 0
+        let width = sizing.bodyWidth(for: model.mode, playing: model.showsCompactPlayback)
         let height = sizing.depth(for: model.mode, page: model.page, scheduleRows: calendar.maximumRowCount)
         let outline = NotchOutline(
             shoulder: shoulder,
-            corner: expanded ? 24 : min(12, sizing.hardwareHeight * 0.33)
+            corner: expanded ? 24 : sizing.compactCorner
         )
 
         Color.black
@@ -47,7 +47,7 @@ struct NotchView: View {
                     .allowsHitTesting(expanded)
                     .accessibilityHidden(!expanded)
                     .animation(contentAnimation, value: expanded)
-                    .padding(.top, sizing.topBleed + sizing.hardwareHeight + 8)
+                    .padding(.top, sizing.topBleed + sizing.hardwareHeight + NotchSizing.expandedTopInset)
             }
             .overlay(alignment: .topLeading) {
                 let size = expanded ? 52.0 : min(20.0, sizing.hardwareHeight - 8)
@@ -55,25 +55,27 @@ struct NotchView: View {
                     .frame(width: size, height: size)
                     .clipShape(.rect(cornerRadius: expanded ? 9 : 4))
                     .offset(
-                        x: shoulder + (expanded ? 19 : 7),
-                        y: sizing.topBleed + (expanded ? sizing.hardwareHeight + 8 : (sizing.hardwareHeight - size) / 2)
+                        x: shoulder + (expanded ? NotchSizing.cardInset : 7),
+                        y: sizing.topBleed + (expanded
+                            ? sizing.hardwareHeight + NotchSizing.expandedTopInset
+                            : (sizing.hardwareHeight - size) / 2)
                     )
                     .opacity(coverVisible ? 1 : 0)
+                    .animation(wingContentAnimation, value: model.desktopWingsVisible)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
             .overlay(alignment: .topTrailing) {
-                PlaybackPips(color: model.musicTint)
+                PlaybackPips(
+                    color: model.musicTint, active: model.mode == .compact && model.showsCompactPlayback
+                )
                     .frame(height: sizing.hardwareHeight)
                     .padding(.top, sizing.topBleed)
                     .padding(.trailing, shoulder + 8)
-                    .opacity(model.mode == .compact && model.isPlaying ? 1 : 0)
+                    .opacity(model.mode == .compact && model.showsCompactPlayback ? 1 : 0)
+                    .animation(wingContentAnimation, value: model.desktopWingsVisible)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
-            }
-            .overlay(alignment: .top) {
-                LockBadgeGlyph(sizing: sizing, revealed: locked && model.lockPreviewRevealed)
-                    .opacity(locked ? 1 : 0)
             }
             .overlay(alignment: .top) {
                 if !locked {
@@ -89,66 +91,107 @@ struct NotchView: View {
                 }
             }
             .clipShape(outline)
-            .animation(shapeAnimation, value: model.mode)
-            .animation(LockBadgeMotion.outline(revealed: model.lockPreviewRevealed, reduceMotion: reduceMotion), value: model.lockPreviewRevealed)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.23), value: model.page)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: calendar.maximumRowCount)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.19), value: model.isPlaying)
+            .animation(model.desktopWingsVisible ? shapeAnimation : wingShapeAnimation, value: model.mode)
+            .animation(geometryAnimation(duration: 0.32), value: model.page)
+            .animation(geometryAnimation(duration: 0.25), value: calendar.maximumRowCount)
+            .animation(expanded || reduceMotion ? nil : .easeInOut(duration: 0.22), value: model.isPlaying)
+            .animation(wingShapeAnimation, value: model.desktopWingsVisible)
+            .opacity(locked ? 0 : 1)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .overlay(alignment: .top) {
+                LockBadgeSurface(
+                    sizing: sizing, phase: model.lockPreview, playback: model.lockPlaybackPreview,
+                    hovering: model.isHovering
+                )
+                    .opacity(locked ? 1 : 0)
+                    .accessibilityHidden(!locked)
+            }
             .foregroundStyle(.white)
             .preferredColorScheme(.dark)
     }
 
-    private var expandedContents: some View {
-        let height = sizing.depth(for: .expanded, page: model.page, scheduleRows: calendar.maximumRowCount) - sizing.hardwareHeight - 16
-        return VStack(spacing: 3) {
-            ZStack(alignment: .top) {
-                switch model.page {
-                case .music:
-                    MusicPage(model: model, seekingChanged: seekingChanged, playbackChanged: playbackChanged)
-                        .transition(pageTransition)
-                case .activity:
-                    ActivityPage()
-                        .transition(pageTransition)
-                case .schedule:
-                    SchedulePage(calendar: calendar, viewportHeight: sizing.scheduleViewport(rows: calendar.maximumRowCount))
-                        .transition(pageTransition)
-                        .onAppear { calendar.refresh() }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-
-            HStack(spacing: 2) {
-                ForEach(NotchPage.allCases) { page in
-                    Button {
-                        guard page != model.page else { return }
-                        pageDirection = page.rawValue > model.page.rawValue ? 1 : -1
-                        withAnimation(.easeInOut(duration: reduceMotion ? 0.08 : 0.19)) {
-                            model.page = page
-                        }
-                    } label: {
-                        Circle()
-                            .fill(model.page == page ? Color.white : Color.white.opacity(0.32))
-                            .frame(width: 5, height: 5)
-                            .frame(width: 23, height: 21)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(page.title)
-                    .accessibilityAddTraits(model.page == page ? .isSelected : [])
-                    .help(page.title)
-                }
-            }
-        }
-        .frame(width: sizing.expandedWidth - 38, height: height)
+    private var wingShapeAnimation: Animation? {
+        guard !reduceMotion, model.desktopWingsVisible else { return nil }
+        return .easeOut(duration: 0.22)
     }
 
-    private var pageTransition: AnyTransition {
-        guard !reduceMotion else { return .opacity }
-        return .asymmetric(
-            insertion: .offset(x: 9 * pageDirection).combined(with: .opacity),
-            removal: .offset(x: -6 * pageDirection).combined(with: .opacity)
-        )
+    private func geometryAnimation(duration: Double) -> Animation? {
+        guard !reduceMotion, model.desktopWingsVisible else { return nil }
+        return .smooth(duration: duration)
+    }
+
+    private var wingContentAnimation: Animation {
+        if !model.desktopWingsVisible { return .easeOut(duration: 0.09) }
+        return .easeOut(duration: 0.19).delay(reduceMotion ? 0 : 0.055)
+    }
+
+    private var expandedContents: some View {
+        let rows = calendar.maximumRowCount
+        let height = sizing.cardHeight(for: model.page, scheduleRows: rows)
+        let totalWidth = sizing.expandedWidth - 2 * NotchSizing.contentInset
+        let width = totalWidth - NotchSizing.pageRailWidth - NotchSizing.pageRailGap
+
+        return HStack(alignment: .top, spacing: NotchSizing.pageRailGap) {
+            pageRail
+                .padding(.top, 4)
+                .frame(width: NotchSizing.pageRailWidth)
+
+            VStack(spacing: NotchSizing.cardGap) {
+                ForEach(NotchPage.allCases) { page in
+                    card(page)
+                        .frame(width: width, height: sizing.cardHeight(for: page, scheduleRows: rows), alignment: .topLeading)
+                        .opacity(model.page == page ? 1 : 0.48)
+                        .animation(.easeInOut(duration: reduceMotion ? 0.12 : 0.22), value: model.page == page)
+                        .allowsHitTesting(model.page == page)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityHidden(model.page != page)
+                }
+            }
+            .offset(y: -sizing.cardOffset(for: model.page, scheduleRows: rows))
+            .frame(width: width, height: height, alignment: .topLeading)
+            .clipped()
+            .contentShape(Rectangle())
+        }
+        .frame(width: totalWidth, height: height, alignment: .top)
+    }
+
+    private var pageRail: some View {
+        VStack(spacing: 0) {
+            ForEach(NotchPage.allCases) { page in
+                Button {
+                    selectPage(page)
+                } label: {
+                    Circle()
+                        .fill(model.page == page ? Color.white : Color.white.opacity(0.32))
+                        .frame(width: 5, height: 5)
+                        .frame(width: NotchSizing.pageRailWidth, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(page.title)
+                .accessibilityAddTraits(model.page == page ? .isSelected : [])
+                .help(page.title)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func card(_ page: NotchPage) -> some View {
+        switch page {
+        case .music:
+            MusicPage(model: model, seekingChanged: seekingChanged, playbackChanged: playbackChanged)
+        case .activity:
+            ActivityPage(feed: activity)
+                .task(id: expanded && model.page == .activity) {
+                    if expanded && model.page == .activity { await activity.refresh() }
+                }
+        case .schedule:
+            SchedulePage(
+                calendar: calendar,
+                viewportHeight: sizing.scheduleViewport(rows: calendar.maximumRowCount),
+                edgesChanged: { model.agendaScrollEdges = $0 }
+            )
+        }
     }
 }
 
@@ -185,21 +228,45 @@ struct NotchOutline: Shape {
 }
 
 struct PlaybackPips: View {
-    var color: Color
-    var heights: [CGFloat] = [5, 10, 7, 9]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let color: Color
+    let active: Bool
+
+    private let levels: [[CGFloat]] = [
+        [0.66, 0.86, 0.48, 0.83],
+        [0.84, 0.47, 0.92, 0.61],
+        [0.46, 0.90, 0.72, 0.96],
+        [0.92, 0.70, 0.89, 0.49]
+    ]
 
     var body: some View {
+        Group {
+            if active && !reduceMotion {
+                TimelineView(.periodic(from: .now, by: 0.24)) { context in
+                    let step = Int(context.date.timeIntervalSinceReferenceDate / 0.24) % levels.count
+                    bars(levels[step])
+                        .animation(.easeInOut(duration: 0.24), value: step)
+                }
+            } else {
+                bars(levels[0])
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func bars(_ values: [CGFloat]) -> some View {
         HStack(spacing: 2) {
-            ForEach(heights.indices, id: \.self) { index in
+            ForEach(values.indices, id: \.self) { index in
                 Capsule()
                     .fill(color)
-                    .frame(width: 2, height: heights[index])
+                    .frame(width: 2, height: 12)
+                    .scaleEffect(x: 1, y: values[index])
             }
         }
     }
 }
 
-private struct AlbumArtwork: View {
+struct AlbumArtwork: View {
     let image: NSImage?
     let tint: Color
 

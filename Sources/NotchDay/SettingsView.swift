@@ -37,7 +37,8 @@ struct NotchSettingsView: View {
 
             Divider()
             HStack {
-                Button(model.lockPreviewRevealed ? "结束锁屏预览" : "预览白锁", action: toggleLockPreview)
+                Button(model.mode == .locked ? "结束锁屏预览" : "预览白锁", action: toggleLockPreview)
+                    .disabled(model.mode == .locked && model.lockPreview != .locked)
                 Spacer()
                 Button("退出 NotchDay", role: .destructive) {
                     NSApp.terminate(nil)

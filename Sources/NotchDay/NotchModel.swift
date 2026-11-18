@@ -25,18 +25,30 @@ enum NotchPage: Int, CaseIterable, Identifiable {
 }
 
 struct NotchSizing: Equatable {
+    static let contentInset: CGFloat = 19
+    static let pageRailWidth: CGFloat = 18
+    static let pageRailGap: CGFloat = 12
+    static let cardInset = contentInset + pageRailWidth + pageRailGap
+    static let cardGap: CGFloat = 10
+    static let expandedTopInset: CGFloat = 8
+    static let expandedBottomInset: CGFloat = 18
+    private static let expandedInsets = expandedTopInset + expandedBottomInset
+
     let hardwareWidth: CGFloat
     let hardwareHeight: CGFloat
     let availableWidth: CGFloat
     let screenHeight: CGFloat
     let topBleed: CGFloat
 
+    var compactCorner: CGFloat { min(12, hardwareHeight * 0.33) }
+
     var expandedWidth: CGFloat {
         min(availableWidth, max(392, hardwareWidth + 112))
     }
 
     var maximumSize: CGSize {
-        CGSize(width: expandedWidth + 30, height: max(screenHeight / 2, hardwareHeight + 169))
+        let minimumDepth = NotchPage.allCases.map { depth(for: .expanded, page: $0, scheduleRows: 0) }.max() ?? hardwareHeight
+        return CGSize(width: expandedWidth + 2 * shoulder(for: .expanded), height: max(screenHeight / 2, minimumDepth))
     }
 
     func bodyWidth(for mode: NotchMode, playing: Bool) -> CGFloat {
@@ -53,15 +65,25 @@ struct NotchSizing: Equatable {
 
     func depth(for mode: NotchMode, page: NotchPage, scheduleRows: Int) -> CGFloat {
         guard mode == .expanded else { return hardwareHeight }
+        return hardwareHeight + Self.expandedInsets + cardHeight(for: page, scheduleRows: scheduleRows)
+    }
+
+    func cardHeight(for page: NotchPage, scheduleRows: Int) -> CGFloat {
         switch page {
-        case .music: return hardwareHeight + 155
-        case .activity: return hardwareHeight + 91
-        case .schedule: return hardwareHeight + 40 + scheduleViewport(rows: scheduleRows)
+        case .music: 114
+        case .activity: 142
+        case .schedule: scheduleViewport(rows: scheduleRows)
+        }
+    }
+
+    func cardOffset(for page: NotchPage, scheduleRows: Int) -> CGFloat {
+        NotchPage.allCases.prefix(page.rawValue).reduce(0) {
+            $0 + cardHeight(for: $1, scheduleRows: scheduleRows) + Self.cardGap
         }
     }
 
     func scheduleViewport(rows: Int) -> CGFloat {
-        min(AgendaLayout.contentHeight(rows: rows), max(56, screenHeight / 2 - hardwareHeight - 40))
+        min(AgendaLayout.contentHeight(rows: rows), max(56, screenHeight / 2 - hardwareHeight - Self.expandedInsets))
     }
 }
 
@@ -76,17 +98,26 @@ enum AgendaLayout {
     }
 }
 
+struct AgendaScrollEdges: Equatable {
+    var canGoEarlier = false
+    var canGoLater = false
+}
+
 @MainActor
 @Observable
 final class NotchModel {
     let music = MusicPlayback()
     var mode: NotchMode = .compact
     var page: NotchPage = .music
-    var lockPreviewRevealed = false
+    var lockPreview: LockBadgePhase = .hidden
+    var lockPlaybackPreview: LockPlayback?
+    var agendaScrollEdges = AgendaScrollEdges()
     var isHovering = false
     var isSeeking = false
+    var desktopWingsVisible = true
 
     var isPlaying: Bool { music.isPlaying }
+    var showsCompactPlayback: Bool { desktopWingsVisible && isPlaying }
     var track: MusicTrack { music.track }
     var musicTint: Color { Color(red: 0.54, green: 0.56, blue: 0.97) }
 

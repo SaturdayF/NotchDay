@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct MusicPage: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var seekPreview: Double?
 
     let model: NotchModel
@@ -28,7 +27,8 @@ struct MusicPage: View {
                     .animation(.easeInOut(duration: 0.16), value: model.track.id)
 
                     Spacer(minLength: 4)
-                    playbackIndicator
+                    PlaybackPips(color: model.musicTint, active: updatesWhileVisible)
+                        .opacity(model.isPlaying ? 1 : 0.45)
                 }
                 .contentShape(Rectangle())
             }
@@ -87,25 +87,6 @@ struct MusicPage: View {
     private func headerAction() {
         if connected { SystemLinks.openMusic() }
         else { model.music.connectionAction() }
-    }
-
-    @ViewBuilder
-    private var playbackIndicator: some View {
-        if updatesWhileVisible && !reduceMotion {
-            TimelineView(.periodic(from: .now, by: 0.32)) { context in
-                let step = Int(context.date.timeIntervalSinceReferenceDate * 3) % 4
-                let values: [CGFloat] = [6, 12, 8, 10]
-                let heights = values.indices.map { values[($0 + step) % values.count] }
-                PlaybackPips(color: model.musicTint, heights: heights)
-                    .frame(height: 14)
-                    .animation(.easeInOut(duration: 0.24), value: step)
-            }
-            .accessibilityHidden(true)
-        } else {
-            PlaybackPips(color: model.musicTint)
-                .opacity(model.isPlaying ? 1 : 0.45)
-                .accessibilityHidden(true)
-        }
     }
 
     private func timeLabel(_ seconds: Double) -> some View {

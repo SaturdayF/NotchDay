@@ -19,6 +19,9 @@ private final class NotchAppDelegate: NSObject, NSApplicationDelegate {
     private let controller = NotchController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let icon = NSImage(named: "AppIcon") {
+            NSApp.applicationIconImage = icon
+        }
         controller.start()
     }
 

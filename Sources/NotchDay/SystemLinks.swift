@@ -4,9 +4,18 @@ import AppKit
 enum SystemLinks {
     static func openMusic() { openApp("com.apple.Music") }
     static func openCalendar() { openApp("com.apple.iCal") }
+    static func openReminders() { openApp("com.apple.reminders") }
+
+    static func openRemindersPrivacy() {
+        openSettings("com.apple.settings.PrivacySecurity.extension?Privacy_Reminders")
+    }
 
     static func openAutomationPrivacy() {
         openSettings("com.apple.settings.PrivacySecurity.extension?Privacy_Automation")
+    }
+
+    static func openFullDiskAccess() {
+        openSettings("com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")
     }
 
     static func openSoundOutput() {

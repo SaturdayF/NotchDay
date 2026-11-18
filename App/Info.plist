@@ -8,14 +8,18 @@
 	<string>NotchDay</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.notchday.preview</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleName</key>
 	<string>NotchDay</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.1</string>
+	<string>0.4.0</string>
 	<key>CFBundleVersion</key>
-	<string>4</string>
+	<string>7</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>LSUIElement</key>
@@ -24,6 +28,8 @@
 	<string>NotchDay 读取「音乐」的播放状态并执行你点击的播放控制。</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>NotchDay 读取系统日历，在灵动岛内显示今天和明天的日程。</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>NotchDay 读取今天和明天到期的未完成提醒事项，并在灵动岛的日程卡片中显示。</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

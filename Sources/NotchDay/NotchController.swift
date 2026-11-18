@@ -6,26 +6,31 @@ import SwiftUI
 final class NotchController: NSObject {
     private let model = NotchModel()
     private let calendar = CalendarFeed()
+    private let activity = ActivityFeed()
     private let lockBadge = LockBadge()
     private var panel: NotchPanel?
     private var settingsWindow: NSWindow?
     private var display: NotchDisplay?
+    private var desktopPanelFollowsNotch = false
     private var globalPointerMonitor: Any?
     private var localPointerMonitor: Any?
     private var pendingHover: Task<Void, Never>?
     private var pendingRestore: Task<Void, Never>?
-    private var pendingPreviewRetraction: Task<Void, Never>?
+    private var pendingLockHandoff: Task<Void, Never>?
+    private var pendingPreviewMotion: Task<Void, Never>?
     private var lockedWatch: Task<Void, Never>?
     private var systemLocked = false
     private var restoring = false
     private var suppressHover = false
-    private var scrollDistance: CGFloat = 0
-    private var scrollTime: TimeInterval = 0
-    private var consumedScroll = false
+    private var wheelGesture = NotchWheelGesture()
+    private lazy var desktopSpaces = DesktopSpaces()
 
     func start() {
         calendar.start()
-        model.music.changed = { [weak self] in self?.updatePointer() }
+        model.music.changed = { [weak self] in
+            self?.prepareLockPlayback()
+            self?.updatePointer()
+        }
         model.music.start()
         if Self.systemLockStatus == true {
             screenLocked()
@@ -53,6 +58,9 @@ final class NotchController: NSObject {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(displayWoke), name: NSWorkspace.screensDidWakeNotification, object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(activeSpaceChanged), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil
+        )
     }
 
     func stop() {
@@ -60,7 +68,8 @@ final class NotchController: NSObject {
         model.music.stop()
         pendingHover?.cancel()
         pendingRestore?.cancel()
-        pendingPreviewRetraction?.cancel()
+        pendingLockHandoff?.cancel()
+        pendingPreviewMotion?.cancel()
         lockedWatch?.cancel()
         if let globalPointerMonitor { NSEvent.removeMonitor(globalPointerMonitor) }
         if let localPointerMonitor { NSEvent.removeMonitor(localPointerMonitor) }
@@ -77,6 +86,10 @@ final class NotchController: NSObject {
 
     @objc private func refreshDisplay() {
         guard !restoring else { return }
+        if !systemLocked, Self.systemLockStatus == true {
+            screenLocked()
+            return
+        }
         if systemLocked {
             if let current = NotchDisplay.preferred(), current.sizing.topBleed > 0, current != display {
                 display = current
@@ -86,24 +99,37 @@ final class NotchController: NSObject {
         }
         guard let display = NotchDisplay.preferred() else {
             panel?.orderOut(nil)
+            lockBadge.discardStagedPlayback()
             self.display = nil
             return
         }
 
+        let sizingChanged = self.display?.sizing != display.sizing
         self.display = display
         let panel = self.panel ?? makePanel()
         self.panel = panel
-        let view = NotchView(
-            model: model,
-            calendar: calendar,
-            sizing: display.sizing,
-            toggleExpanded: { [weak self] in self?.toggleExpanded() },
-            seekingChanged: { [weak self] active in self?.setSeeking(active) },
-            playbackChanged: { [weak self] in self?.updatePointer() }
-        )
-        panel.contentView = NSHostingView(rootView: view)
-        panel.setFrame(display.panelFrame, display: true, animate: false)
-        panel.orderFrontRegardless()
+        if sizingChanged || !(panel.contentView is NSHostingView<NotchView>) {
+            let view = NotchView(
+                model: model,
+                calendar: calendar,
+                activity: activity,
+                sizing: display.sizing,
+                toggleExpanded: { [weak self] in self?.toggleExpanded() },
+                seekingChanged: { [weak self] active in self?.setSeeking(active) },
+                playbackChanged: { [weak self] in self?.updatePointer() },
+                selectPage: { [weak self] page in self?.selectPage(page) }
+            )
+            panel.contentView = NSHostingView(rootView: view)
+        }
+        if panel.frame != display.panelFrame { panel.setFrame(display.panelFrame, display: true, animate: false) }
+        if !desktopPanelFollowsNotch, display.sizing.topBleed > 0 {
+            let fallback = panel.collectionBehavior
+            panel.collectionBehavior = [.ignoresCycle]
+            desktopPanelFollowsNotch = lockBadge.attachDesktopPanel(panel)
+            if !desktopPanelFollowsNotch { panel.collectionBehavior = fallback }
+        }
+        if !panel.isVisible { panel.orderFrontRegardless() }
+        prepareLockPlayback()
         updatePointer()
     }
 
@@ -125,7 +151,11 @@ final class NotchController: NSObject {
         panel.acceptsMouseMovedEvents = true
         panel.ignoresMouseEvents = true
         panel.level = .statusBar + 1
-        panel.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle]
+        panel.collectionBehavior = [.managed, .moveToActiveSpace, .ignoresCycle, .fullScreenAuxiliary]
+        panel.acceptsDesktopInput = { [weak self] in
+            guard let self else { return false }
+            return !self.systemLocked && !self.restoring && Self.systemLockStatus != true
+        }
         panel.handleScroll = { [weak self] event in self?.handleScroll(event) ?? false }
         panel.openSettings = { [weak self] in self?.openSettings() }
         panel.closeIsland = { [weak self] in self?.collapseExplicitly() }
@@ -136,13 +166,17 @@ final class NotchController: NSObject {
         guard let display else { return nil }
         let sizing = display.sizing
         let location = display.anchor
-        let width = sizing.bodyWidth(for: model.mode, playing: model.isPlaying)
         let height = sizing.depth(for: model.mode, page: model.page, scheduleRows: calendar.maximumRowCount)
-        return CGRect(x: location.x - width / 2, y: location.y - height, width: width, height: height)
+        let lockHasMusicWidth = model.mode == .locked && model.lockPlaybackPreview != nil
+        let width = lockHasMusicWidth ? sizing.bodyWidth(for: .compact, playing: true)
+            : sizing.bodyWidth(for: model.mode, playing: model.showsCompactPlayback)
+        let leftMargin = model.mode == .locked && !lockHasMusicWidth ? LockBadgeMotion.leftMargin : 0
+        return CGRect(x: location.x - width / 2 - leftMargin, y: location.y - height, width: width + leftMargin, height: height)
     }
 
     private func updatePointer() {
-        guard !systemLocked, !restoring, let panel, let bounds = hitRegion() else { return }
+        guard !systemLocked, !restoring, model.desktopWingsVisible,
+              let panel, let bounds = hitRegion() else { return }
         let containsPointer = bounds.contains(NSEvent.mouseLocation)
         let acceptsPointer = containsPointer || model.isSeeking
         let ignoresPointer = !acceptsPointer
@@ -165,18 +199,29 @@ final class NotchController: NSObject {
 
     @objc private func screenLocked() {
         guard !systemLocked else { return }
+        let playback = lockPlayback()
         systemLocked = true
         restoring = false
         pendingRestore?.cancel()
-        pendingPreviewRetraction?.cancel()
+        pendingLockHandoff?.cancel()
+        pendingPreviewMotion?.cancel()
         pendingHover?.cancel()
-        panel?.orderOut(nil)
-        model.lockPreviewRevealed = false
-        model.mode = .compact
+        panel?.ignoresMouseEvents = true
         model.isSeeking = false
         model.isHovering = false
         model.music.setVisible(false)
-        if let geometry = display ?? NotchDisplay.preferred() { lockBadge.show(on: geometry) }
+        if model.mode != .compact { panel?.orderOut(nil) }
+        let geometry = display ?? NotchDisplay.preferred()
+        let showedLockBadge = geometry.map { lockBadge.show(on: $0, playback: playback) } ?? false
+        if showedLockBadge, playback != nil, model.mode == .compact {
+            // Let the pre-rendered lock window reach the compositor before retiring the matching desktop frame.
+            pendingLockHandoff = Task { [weak self] in
+                do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+                self?.retireDesktopForLock()
+            }
+        } else {
+            retireDesktopForLock()
+        }
 
         // Limit the fallback check to the locked session in case a wake delays the unlock notice.
         lockedWatch?.cancel()
@@ -192,8 +237,18 @@ final class NotchController: NSObject {
         }
     }
 
+    private func retireDesktopForLock() {
+        panel?.orderOut(nil)
+        model.desktopWingsVisible = false
+        model.lockPreview = .hidden
+        model.lockPlaybackPreview = nil
+        model.mode = .compact
+    }
+
     @objc private func screenUnlocked() {
         guard systemLocked else { return }
+        pendingLockHandoff?.cancel()
+        retireDesktopForLock()
         systemLocked = false
         lockedWatch?.cancel()
         restoring = true
@@ -214,12 +269,37 @@ final class NotchController: NSObject {
                 }
                 guard let self, !self.systemLocked else { return }
                 self.restoring = false
-                self.suppressHover = true
-                self.refreshDisplay()
+                try await self.restoreDesktopWings()
             } catch {
                 return
             }
         }
+    }
+
+    @objc private func activeSpaceChanged() {
+        guard !systemLocked, !restoring else { return }
+        if Self.systemLockStatus == true {
+            screenLocked()
+            return
+        }
+        movePanelToCurrentSpace()
+    }
+
+    private func movePanelToCurrentSpace() {
+        guard !desktopPanelFollowsNotch, let panel, let display, !panel.isOnActiveSpace else { return }
+        desktopSpaces?.moveWindowToActiveSpace(windowNumber: panel.windowNumber, on: display.spaceIdentifier)
+        if !panel.isOnActiveSpace { panel.orderFrontRegardless() }
+    }
+
+    private func restoreDesktopWings() async throws {
+        suppressHover = true
+        refreshDisplay()
+        // Mount the narrow shape for one frame before widening it and fading in the artwork.
+        try await Task.sleep(for: .milliseconds(45))
+        guard !systemLocked else { return }
+        model.desktopWingsVisible = true
+        prepareLockPlayback()
+        updatePointer()
     }
 
     @objc private func displayWoke() {
@@ -249,7 +329,7 @@ final class NotchController: NSObject {
     }
 
     private func toggleExpanded() {
-        guard model.mode != .locked else { return }
+        guard model.mode != .locked, model.desktopWingsVisible else { return }
         if model.mode == .expanded {
             collapseExplicitly()
         } else {
@@ -269,7 +349,17 @@ final class NotchController: NSObject {
         guard model.mode != mode else { return }
         model.mode = mode
         if mode == .expanded && model.page == .schedule { calendar.refresh() }
-        if mode != .expanded { panel?.resignKey() }
+        if mode != .expanded {
+            wheelGesture = NotchWheelGesture()
+            panel?.resignKey()
+        }
+        updatePointer()
+    }
+
+    private func selectPage(_ page: NotchPage) {
+        guard model.mode == .expanded, page != model.page else { return }
+        if page == .schedule { calendar.refresh() }
+        model.page = page
         updatePointer()
     }
 
@@ -280,23 +370,44 @@ final class NotchController: NSObject {
     }
 
     private func handleScroll(_ event: NSEvent) -> Bool {
-        guard model.mode == .expanded, model.page == .music, !model.isSeeking,
-              abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
-        else { return false }
+        guard model.mode == .expanded, !model.isSeeking else { return false }
 
-        if !event.momentumPhase.isEmpty { return true }
-        if event.phase == .began || event.timestamp - scrollTime > 0.22 {
-            scrollDistance = 0
-            consumedScroll = false
+        let movement = NotchWheelGesture.Movement(
+            dx: event.scrollingDeltaX,
+            dy: event.scrollingDeltaY,
+            timestamp: event.timestamp,
+            startsGesture: event.phase == .began,
+            isUnphased: event.phase.isEmpty,
+            isMomentum: !event.momentumPhase.isEmpty,
+            isPrecise: event.hasPreciseScrollingDeltas
+        )
+        // Resolve the calendar's scroll priority lazily, only at the start of a gesture.
+        let action = wheelGesture.handle(movement) { [self] isHorizontal in
+            if isHorizontal { return model.page == .music ? .songs : .native }
+            return agendaUsesScroll(event, earlier: movement.dy > 0) ? .native : .pages
         }
-        scrollTime = event.timestamp
-        scrollDistance += event.scrollingDeltaX
-        if !consumedScroll, abs(scrollDistance) >= 40 {
-            consumedScroll = true
-            model.changeTrack(by: scrollDistance > 0 ? 1 : -1)
-            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        switch action {
+        case .forward:
+            return false
+        case .consume:
+            break
+        case let .changeTrack(step):
+            model.changeTrack(by: step)
+        case let .selectPage(step):
+            if let next = NotchPage(rawValue: model.page.rawValue + step) { selectPage(next) }
         }
         return true
+    }
+
+    private func agendaUsesScroll(_ event: NSEvent, earlier: Bool) -> Bool {
+        guard model.page == .schedule, let panel, let display else { return false }
+        let sizing = display.sizing
+        let rows = calendar.maximumRowCount
+        guard AgendaLayout.contentHeight(rows: rows) > sizing.scheduleViewport(rows: rows) else { return false }
+
+        let leftOfBody = (panel.frame.width - sizing.expandedWidth) / 2
+        guard event.locationInWindow.x >= leftOfBody + NotchSizing.cardInset else { return false }
+        return earlier ? model.agendaScrollEdges.canGoEarlier : model.agendaScrollEdges.canGoLater
     }
 
     private func openSettings() {
@@ -326,24 +437,47 @@ final class NotchController: NSObject {
     }
 
     @objc private func toggleLockPreview() {
-        guard !systemLocked, !restoring else { return }
+        guard !systemLocked, !restoring, model.desktopWingsVisible,
+              model.mode != .locked || model.lockPreview == .locked else { return }
         suppressHover = true
-        pendingPreviewRetraction?.cancel()
-        if model.lockPreviewRevealed {
-            model.lockPreviewRevealed = false
-            pendingPreviewRetraction = Task { [weak self] in
-                do { try await Task.sleep(for: LockBadgeMotion.dismissal) } catch { return }
-                self?.setMode(.compact)
+        pendingPreviewMotion?.cancel()
+        if model.lockPreview == .locked {
+            pendingPreviewMotion = Task { [weak self] in
+                guard let self, await LockBadgeMotion.retract({ self.model.lockPreview = $0 }) else { return }
+                self.model.lockPlaybackPreview = nil
+                self.model.desktopWingsVisible = false
+                self.setMode(.compact)
+                try? await self.restoreDesktopWings()
             }
         } else {
+            model.lockPlaybackPreview = lockPlayback()
+            let phase: LockBadgePhase = model.lockPlaybackPreview == nil ? .hidden : .music
+            model.lockPreview = phase
             setMode(.locked)
-            model.lockPreviewRevealed = true
+            pendingPreviewMotion = Task { [weak self] in
+                await LockBadgeMotion.present(from: phase) { self?.model.lockPreview = $0 }
+            }
+        }
+    }
+
+    private func lockPlayback() -> LockPlayback? {
+        model.isPlaying ? LockPlayback(artwork: model.music.artwork, tint: model.musicTint) : nil
+    }
+
+    private func prepareLockPlayback() {
+        guard !systemLocked, !restoring else { return }
+        if model.desktopWingsVisible,
+           let display, let playback = lockPlayback(), display.sizing.topBleed > 0 {
+            lockBadge.stagePlayback(on: display, playback: playback)
+        } else {
+            lockBadge.discardStagedPlayback()
         }
     }
 }
 
 @MainActor
 private final class NotchPanel: TopAnchoredPanel {
+    var acceptsDesktopInput: (() -> Bool)?
     var handleScroll: ((NSEvent) -> Bool)?
     var openSettings: (() -> Void)?
     var closeIsland: (() -> Void)?
@@ -352,6 +486,7 @@ private final class NotchPanel: TopAnchoredPanel {
     override var canBecomeMain: Bool { false }
 
     override func sendEvent(_ event: NSEvent) {
+        guard acceptsDesktopInput?() != false else { return }
         switch event.type {
         case .scrollWheel where handleScroll?(event) == true:
             return
@@ -368,6 +503,7 @@ private final class NotchPanel: TopAnchoredPanel {
 struct NotchDisplay: Equatable {
     let anchor: CGPoint
     let sizing: NotchSizing
+    let spaceIdentifier: String?
 
     var panelFrame: CGRect {
         let size = sizing.maximumSize
@@ -397,6 +533,9 @@ struct NotchDisplay: Equatable {
             width = right.minX - left.maxX
             anchorX = (right.minX + left.maxX) / 2
         }
+        let displayNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        let uuid = displayNumber.flatMap { CGDisplayCreateUUIDFromDisplayID($0.uint32Value)?.takeRetainedValue() }
+        let spaceIdentifier = NSScreen.screensHaveSeparateSpaces ? uuid.map { CFUUIDCreateString(nil, $0) as String } : "Main"
         return NotchDisplay(
             anchor: CGPoint(x: anchorX, y: frame.maxY),
             sizing: NotchSizing(
@@ -405,7 +544,8 @@ struct NotchDisplay: Equatable {
                 availableWidth: max(220, frame.width - 50),
                 screenHeight: frame.height,
                 topBleed: screen.safeAreaInsets.top > 0 && screen.auxiliaryTopLeftArea != nil ? 4 : 0
-            )
+            ),
+            spaceIdentifier: spaceIdentifier
         )
     }
 }
