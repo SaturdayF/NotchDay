@@ -8,6 +8,7 @@ enum LockBadgePhase: Equatable {
 
     var inWing: Bool { self == .locked || self == .opening }
     var open: Bool { self == .opening || self == .retracting }
+    var entered: Bool { self == .locked || open }
 }
 
 struct LockPlayback: Equatable {
@@ -42,26 +43,32 @@ enum LockBadgeMotion {
 
     @MainActor
     static func retract(_ update: (LockBadgePhase) -> Void) async -> Bool {
+        guard !Task.isCancelled else { return false }
         update(.opening)
         do {
             try await Task.sleep(for: .milliseconds(260))
-            update(.retracting)
-            try await Task.sleep(for: .milliseconds(280))
-            update(.hidden)
-            return true
         } catch {
             return false
         }
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let animation: Animation = reduceMotion
+            ? .easeInOut(duration: 0.12)
+            : .timingCurve(0.32, 0, 0.24, 1, duration: 0.36)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            withAnimation(animation, completionCriteria: .removed) {
+                update(.retracting)
+            } completion: {
+                continuation.resume()
+            }
+        }
+        guard !Task.isCancelled else { return false }
+        update(.hidden)
+        return true
     }
 
-    static func glyph(entering: Bool, reduceMotion: Bool) -> Animation {
+    static func glyphEntrance(reduceMotion: Bool) -> Animation {
         if reduceMotion { return .easeInOut(duration: 0.12) }
-        return entering ? .spring(duration: 0.36, bounce: 0.19).delay(0.04) : .easeInOut(duration: 0.24)
-    }
-
-    static func outline(entering: Bool, reduceMotion: Bool) -> Animation? {
-        guard !reduceMotion else { return nil }
-        return entering ? .easeOut(duration: 0.25) : .easeInOut(duration: 0.23).delay(0.04)
+        return .spring(duration: 0.36, bounce: 0.19).delay(0.04)
     }
 }
 
@@ -80,7 +87,7 @@ struct LockBadgeSurface: View {
         let musicWidth = sizing.bodyWidth(for: .compact, playing: true)
         let activeWidth = playback == nil ? lockedWidth + LockBadgeMotion.leftMargin : musicWidth
         let width = showsOutline ? activeWidth : sizing.hardwareWidth
-        let lifted = hovering && phase == .locked
+        let lifted = hovering && phase.inWing
 
         ZStack(alignment: .top) {
             NotchOutline(shoulder: shoulder, corner: sizing.compactCorner)
@@ -88,7 +95,7 @@ struct LockBadgeSurface: View {
                 .frame(width: width + 2 * shoulder, height: height)
                 .offset(x: showsOutline && playback == nil ? -LockBadgeMotion.leftMargin / 2 : 0)
                 .shadow(color: .black.opacity(lifted ? 0.38 : 0), radius: 6, y: 5)
-                .animation(LockBadgeMotion.outline(entering: showsOutline, reduceMotion: reduceMotion), value: showsOutline)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: phase.entered)
 
             if let playback {
                 musicWings(playback, width: musicWidth, shoulder: sizing.shoulder(for: .locked), height: height)
@@ -96,9 +103,9 @@ struct LockBadgeSurface: View {
 
             lockGlyph(lockedWidth: lockedWidth)
         }
-        .scaleEffect(x: lifted && !reduceMotion ? 1.04 : 1, y: lifted && !reduceMotion ? 1.08 : 1, anchor: .top)
-        .animation(.easeOut(duration: 0.18), value: lifted)
         .frame(width: LockBadgeMotion.width(for: sizing), height: height)
+        .scaleEffect(x: lifted && !reduceMotion ? 1.04 : 1, y: lifted && !reduceMotion ? 1.08 : 1, anchor: .top)
+        .animation(.easeOut(duration: 0.18), value: hovering)
         .allowsHitTesting(false)
     }
 
@@ -145,7 +152,7 @@ struct LockBadgeSurface: View {
         .clipped()
         .frame(width: lockedWidth, alignment: .leading)
         .padding(.top, sizing.topBleed)
-        .animation(LockBadgeMotion.glyph(entering: phase.inWing, reduceMotion: reduceMotion), value: phase.inWing)
+        .animation(LockBadgeMotion.glyphEntrance(reduceMotion: reduceMotion), value: phase.entered)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(phase.open ? "打开的白锁" : "白锁")
         .accessibilityHidden(!phase.inWing)
@@ -313,7 +320,6 @@ final class LockBadge {
     func retract() async {
         motionTask?.cancel()
         hoverTask?.cancel()
-        state.hovering = false
         guard presenting else { return }
         if state.phase.inWing {
             guard await LockBadgeMotion.retract({ state.phase = $0 }) else { return }
@@ -322,6 +328,7 @@ final class LockBadge {
         panel?.alphaValue = 0
         panel?.orderOut(nil)
         presenting = false
+        state.hovering = false
         state.playback = nil
     }
 

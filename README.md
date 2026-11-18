@@ -7,16 +7,16 @@
 
 ## 效果展示
 
-下图为设计预览，使用演示数据。浏览器预览可以体验展开、切页和白锁动画。[打开交互预览源码](docs/design/v3/interaction-preview.html)
+下图由当前版本的 SwiftUI 界面渲染。所有曲目、用量、网站、日程和提醒事项均为演示数据。
 
 <table>
   <tr>
-    <td width="50%"><b>Apple Music</b><br><img src="docs/design/v3/01-apple-music.png" alt="展开的音乐卡片，内含封面、进度和播放控件"></td>
-    <td width="50%"><b>App 与网站活动</b><br><img src="docs/design/v3/02-app-usage.png" alt="今日用时、小时分布和使用时长列表"></td>
+    <td width="50%"><b>Apple Music</b><br><img src="docs/screenshots/01-music.png" alt="展开的音乐卡片，内含封面、进度和播放控件"></td>
+    <td width="50%"><b>App 与网站活动</b><br><img src="docs/screenshots/02-activity.png" alt="今日用时、小时分布和使用时长列表"></td>
   </tr>
   <tr>
-    <td><b>今天与明天</b><br><img src="docs/design/v3/03-schedule.png" alt="按今天和明天分栏显示的日程卡片"></td>
-    <td><b>锁屏白锁</b><br><img src="docs/design/v3/04-lock-screen.png" alt="已锁定状态下，实体刘海左侧出现白锁"></td>
+    <td><b>今天与明天</b><br><img src="docs/screenshots/03-agenda.png" alt="按今天和明天分栏显示的事件与提醒事项"></td>
+    <td><b>锁屏白锁</b><br><img src="docs/screenshots/04-lock.png" alt="已锁定状态下，实体刘海左侧出现白锁"></td>
   </tr>
 </table>
 
@@ -65,4 +65,4 @@ cd NotchDay
 open .codex/native-preview/NotchDay.app
 ```
 
-交互设计参考 [Atoll](https://github.com/Ebullioscopic/Atoll)。SkyLight 窗口接口参考 [SkyLightWindow](https://github.com/Lakr233/SkyLightWindow)。
+交互设计参考 [Atoll](https://github.com/Ebullioscopic/Atoll)。SkyLight 窗口接口参考 [SkyLightWindow](https://github.com/Lakr233/SkyLightWindow)。仓库保留了早期的 [浏览器交互原型](docs/design/v3/interaction-preview.html)。
