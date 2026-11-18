@@ -1,0 +1,717 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>NotchDay · 交互预览</title>
+<style>
+  :root {
+    color-scheme: dark;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #0c0d14;
+    color: #f6f6fa;
+    font-synthesis: none;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  button, input { font: inherit; }
+  button { color: inherit; cursor: pointer; }
+  button:focus-visible, input:focus-visible { outline: 2px solid #a6aeff; outline-offset: 3px; }
+  [hidden] { display: none !important; }
+  .preview { width: min(1160px, calc(100% - 56px)); margin: 0 auto; padding: 42px 0 26px; }
+  .preview-header, .preview-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+  .preview-header { margin-bottom: 20px; }
+  .heading { display: flex; align-items: center; gap: 12px; }
+  .mark { width: 31px; height: 31px; background: #22243b; border-radius: 8px; display: grid; place-items: start center; overflow: hidden; }
+  .mark::before { content: ""; width: 17px; height: 9px; background: #acb4ff; border-radius: 0 0 5px 5px; }
+  h1 { font-size: 23px; font-weight: 660; letter-spacing: -.05em; margin: 0; }
+  .heading span:last-child { color: #9fa2b8; font-size: 13px; margin-left: 2px; }
+  .demo-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  .demo-button { min-height: 37px; padding: 0 13px; border: 1px solid #303247; border-radius: 8px; background: #181a29; font-size: 13px; }
+  .demo-button:hover { background: #25273c; }
+  .demo-button[aria-pressed="true"] { background: #272d53; border-color: #525c98; color: #dce0ff; }
+  .desktop {
+    --travel: 230ms;
+    --content-out: 110ms;
+    --ease: cubic-bezier(.22,.8,.22,1);
+    --bare-width: 136px;
+    --wing-width: 214px;
+    --expanded-width: min(408px, calc(100% - 24px), max(292px, 52%));
+    position: relative; isolation: isolate; height: clamp(390px, 54vw, 610px); overflow: hidden;
+    border-radius: 13px; border: 1px solid #252742;
+    background: radial-gradient(ellipse at 38% 26%, #1a1d44 0%, #141638 33%, #10122e 74%);
+  }
+  .desktop[data-reduce="true"] { --travel: 0ms; --content-out: 70ms; }
+  .wallpaper { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  .ribbon { position: absolute; }
+  .ribbon-a {
+    width: 156%; height: 50%; top: 81%; left: -20%;
+    border-radius: 50%; transform: rotate(12deg) skewX(-8deg);
+    background: linear-gradient(168deg, #2f44ff 3%, #1823a8 35%, #100f52 59%, #151238 100%);
+    box-shadow: 0 -1px 2px #6d7cff, 0 -2px 17px #3d43e970;
+  }
+  .ribbon-b {
+    width: 170%; height: 56%; top: 91%; left: -18%;
+    border-radius: 48% 52% 0 0; transform: rotate(4deg) skewX(-15deg);
+    background: linear-gradient(168deg, #5348ed 0%, #222580 12%, #141a55 40%, #111332 78%);
+    box-shadow: 0 -1px 3px #b4abff, 0 -4px 23px #6356ffc0;
+  }
+  .ribbon-c {
+    width: 130%; height: 42%; top: 91%; left: 19%;
+    border-radius: 54%; transform: rotate(-6deg);
+    background: linear-gradient(174deg, #182cb9, #101645 35%, #181946 77%);
+    box-shadow: 0 -1px 3px #404fff, 0 -4px 15px #2839ed80;
+  }
+  .menu-bar { position: absolute; inset: 0 0 auto; height: 32px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #eef0ff; pointer-events: none; }
+  .menu-left, .menu-right { display: flex; align-items: center; gap: 12px; }
+  .menu-left { transition: opacity 140ms ease; }
+  .menu-right { gap: 9px; }
+  .desktop[data-locked="true"] .menu-left { opacity: 0; }
+  .battery { position: relative; width: 17px; height: 8px; border: 1px solid #e1e4f7; border-radius: 2px; }
+  .battery::before { content: ""; position: absolute; inset: 1px 2px 1px 1px; background: #e1e4f7; border-radius: 1px; }
+  .battery::after { content: ""; position: absolute; top: 2px; right: -3px; width: 1px; height: 2px; background: #e1e4f7; }
+  .wifi { width: 13px; height: 9px; position: relative; border-top: 1.5px solid; border-radius: 50%; transform: translateY(2px); }
+  .wifi::before, .wifi::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); }
+  .wifi::before { top: 2px; width: 7px; height: 5px; border-top: 1.5px solid; border-radius: 50%; }
+  .wifi::after { top: 5px; width: 2px; height: 2px; background: currentColor; border-radius: 50%; }
+
+  .island {
+    --width: var(--wing-width); --depth: 31px; --round: 12px; --shoulder: 10px; --shape-delay: 45ms;
+    position: absolute; z-index: 3; inset: 0 auto auto 50%; transform: translateX(-50%);
+    width: var(--width); height: var(--depth); border-radius: 0 0 var(--round) var(--round);
+    background: #000;
+    transition: width var(--travel) var(--ease) var(--shape-delay), height var(--travel) var(--ease) var(--shape-delay), border-radius var(--travel) var(--ease) var(--shape-delay);
+  }
+  .island::before, .island::after { content: ""; position: absolute; top: 0; width: var(--shoulder); height: var(--shoulder); pointer-events: none; }
+  .island::before { right: calc(100% - .5px); background: radial-gradient(circle at bottom left, transparent 68%, #000 73%); }
+  .island::after { left: calc(100% - .5px); background: radial-gradient(circle at bottom right, transparent 68%, #000 73%); }
+  .island[data-playing="false"][data-expanded="false"] { --width: var(--bare-width); }
+  .island[data-expanded="true"] { --width: var(--expanded-width); --depth: 225px; --round: 25px; --shoulder: 17px; --shape-delay: 0ms; }
+  .island[data-expanded="true"][data-page="music"] { --depth: 211px; }
+  .desktop[data-reduce="true"] .island { --shape-delay: 0ms; }
+  .island[data-expanded="true"][data-page="activity"] { --depth: 232px; }
+  .island[data-locked="true"], .island[data-unlocking="true"] { --width: 173px !important; --depth: 31px; --round: 11px; }
+  .notch-trigger { position: absolute; z-index: 2; inset: 0 0 auto; width: 100%; height: 31px; padding: 0; border: 0; background: transparent; border-radius: 0 0 10px 10px; }
+  .notch-trigger:disabled { cursor: default; }
+  .album-cover {
+    --cover-sky: #263eae; --cover-ridge: #4c60db; --cover-water: #11194c;
+    position: absolute; z-index: 1; overflow: hidden; pointer-events: none;
+    top: 5px; left: 9px; width: 21px; height: 21px; border-radius: 5px;
+    background: radial-gradient(ellipse at 73% 65%, #a595ff, transparent 57%), linear-gradient(180deg, var(--cover-sky), var(--cover-ridge));
+    transition: top var(--travel) var(--ease), left var(--travel) var(--ease), width var(--travel) var(--ease), height var(--travel) var(--ease), border-radius var(--travel) var(--ease), opacity var(--content-out) ease;
+  }
+  .album-cover::before {
+    content: ""; position: absolute; top: 18%; left: 36%; width: 26%; aspect-ratio: 1;
+    border-radius: 50%; box-shadow: -3px 2px 0 #ece6ff; transform: rotate(-19deg);
+  }
+  .album-cover::after {
+    content: ""; position: absolute; inset: 44% -16% -17%; border-radius: 50% 62% 0 0;
+    transform: rotate(13deg); background: linear-gradient(182deg, var(--cover-water) 5%, var(--cover-ridge) 12%, var(--cover-water) 36%, var(--cover-sky) 54%, var(--cover-water) 62%);
+  }
+  .island[data-expanded="true"] .album-cover { top: 36px; left: 23px; width: 59px; height: 59px; border-radius: 10px; }
+  .island[data-expanded="true"]:not([data-page="music"]) .album-cover,
+  .island[data-locked="true"] .album-cover, .island[data-unlocking="true"] .album-cover,
+  .island[data-playing="false"][data-expanded="false"] .album-cover { opacity: 0; }
+  .signal { display: flex; align-items: center; gap: 2px; color: #9b9eff; }
+  .signal i { display: block; width: 2px; height: 11px; border-radius: 2px; background: currentColor; }
+  .signal i:nth-child(1), .signal i:nth-child(4) { transform: scaleY(.45); }
+  .signal i:nth-child(2) { transform: scaleY(.9); }
+  .signal i:nth-child(3) { transform: scaleY(.64); }
+  .compact-signal { position: absolute; top: 10px; right: 11px; transition: opacity 90ms ease; }
+  .island[data-expanded="true"] .compact-signal, .island[data-locked="true"] .compact-signal,
+  .island[data-unlocking="true"] .compact-signal, .island[data-playing="false"] .compact-signal { opacity: 0; }
+  .player-signal i { height: 16px; width: 3px; }
+  .island[data-playing="true"][data-expanded="true"][data-page="music"] .player-signal i { animation: meter 950ms ease-in-out infinite alternate; }
+  .player-signal i:nth-child(2) { animation-delay: -370ms !important; }
+  .player-signal i:nth-child(3) { animation-delay: -670ms !important; }
+  .player-signal i:nth-child(4) { animation-delay: -220ms !important; }
+  @keyframes meter { from { transform: scaleY(.35); } to { transform: scaleY(1); } }
+
+  .island-content { position: absolute; inset: 35px 23px 9px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--content-out) ease, visibility 0ms linear var(--content-out); }
+  .island[data-expanded="true"] .island-content { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity 120ms ease 100ms, visibility 0ms; }
+  .desktop[data-reduce="true"] .island[data-expanded="true"] .island-content { transition-delay: 0ms; }
+  .page { position: absolute; inset: 0 0 28px; }
+  .page.page-in { animation: page-in 160ms var(--ease) both; }
+  @keyframes page-in { from { opacity: 0; transform: translateX(var(--slide, 8px)); } to { opacity: 1; transform: translateX(0); } }
+  .song { min-height: 61px; display: flex; gap: 10px; align-items: center; padding-left: 73px; }
+  .song-copy { min-width: 0; flex: 1; }
+  .song-name { display: block; font-size: 18px; font-weight: 650; line-height: 1.23; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .artist { display: block; font-size: 13px; color: #9a9bad; margin-top: 3px; }
+  .song-copy.changed { animation: track-in 160ms ease; }
+  @keyframes track-in { from { opacity: .45; } to { opacity: 1; } }
+  .seek-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) 36px; gap: 8px; align-items: center; margin-top: 8px; }
+  .seek-row output { font-size: 11px; color: #b5b8cb; font-variant-numeric: tabular-nums; }
+  .seek-row output:last-child { text-align: right; }
+  .seek { appearance: none; -webkit-appearance: none; width: 100%; margin: 0; height: 24px; background: transparent; cursor: ew-resize; touch-action: none; }
+  .seek::-webkit-slider-runnable-track { height: 4px; border-radius: 20px; background: linear-gradient(to right, #f1f2fd var(--progress), #343442 var(--progress)); }
+  .seek::-moz-range-track { height: 4px; border-radius: 20px; background: linear-gradient(to right, #f1f2fd var(--progress), #343442 var(--progress)); }
+  .seek::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 10px; height: 10px; border-radius: 50%; margin-top: -3px; background: #fff; }
+  .seek::-moz-range-thumb { width: 10px; height: 10px; border-radius: 50%; border: 0; background: #fff; }
+  .transport { display: grid; grid-template-columns: repeat(5, 1fr); align-items: center; margin: 8px 1px 0; }
+  .media-button { position: relative; display: grid; place-items: center; justify-self: center; width: 38px; height: 36px; border: 0; border-radius: 8px; background: transparent; padding: 0; }
+  .media-button:hover { background: #ffffff15; }
+  .media-button[aria-pressed="true"] { color: #a8acff; }
+  .shuffle-symbol { font-size: 26px; line-height: 1; }
+  .skip-glyph, .play-glyph, .output-glyph { position: relative; display: block; }
+  .skip-glyph { width: 17px; height: 12px; }
+  .skip-glyph::before, .skip-glyph::after { content: ""; position: absolute; top: 0; width: 10px; height: 12px; background: currentColor; clip-path: polygon(0 0, 100% 50%, 0 100%); }
+  .skip-glyph::before { left: 0; }
+  .skip-glyph::after { left: 8px; }
+  .previous .skip-glyph { transform: scaleX(-1); }
+  .play-glyph { width: 14px; height: 17px; background: currentColor; clip-path: polygon(0 0, 100% 50%, 0 100%); }
+  .island[data-playing="true"] .play-glyph { width: 15px; height: 17px; clip-path: none; background: linear-gradient(to right, currentColor 0 34%, transparent 34% 66%, currentColor 66%); border-radius: 1px; }
+  .output-glyph { width: 15px; height: 10px; border: 1.5px solid currentColor; border-radius: 2px; }
+  .output-glyph::after { content: ""; position: absolute; width: 9px; height: 6px; left: 1.5px; bottom: -5px; background: currentColor; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  .output-menu { z-index: 2; position: absolute; right: 0; bottom: 6px; padding: 4px; border: 1px solid #31313d; border-radius: 8px; background: #181820; }
+  .output-menu button { display: block; padding: 6px 8px; width: 100%; text-align: left; border: 0; border-radius: 4px; background: transparent; font-size: 11px; }
+  .output-menu button:hover, .output-menu button[aria-pressed="true"] { background: #30304b; }
+
+  .pages-nav { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); display: flex; gap: 1px; }
+  .dot { display: grid; place-items: center; border: 0; padding: 0; background: transparent; width: 23px; height: 24px; border-radius: 5px; }
+  .dot::before { content: ""; width: 5px; height: 5px; background: #595966; border-radius: 50%; transition: background 140ms ease, transform 140ms ease; }
+  .dot[aria-selected="true"]::before { background: #f6f6ff; transform: scale(1.13); }
+  .dot:hover::before { background: #b3b5d3; }
+
+  .activity { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 19px; }
+  .small-header { margin: 0; color: #acabbc; font-size: 12px; line-height: 1.3; font-weight: 500; }
+  .total { display: block; margin-top: 4px; font-size: clamp(17px, 4vw, 23px); line-height: 1.22; white-space: nowrap; font-weight: 650; }
+  .chart-wrap { padding-top: 5px; }
+  .chart-max { height: 13px; display: block; font-size: 9px; color: #a3a0b6; text-align: right; }
+  .chart-track { position: relative; display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 1px; align-items: end; height: 55px; border-bottom: 1px solid #363644; background: repeating-linear-gradient(to top, transparent 0 calc(33.333% - 1px), #ffffff23 calc(33.333% - 1px) 33.333%); }
+  .bar { grid-row: 1; display: flex; flex-direction: column-reverse; align-self: stretch; justify-content: flex-start; border: 0; background: transparent; padding: 0 1px; min-width: 0; height: 54px; border-radius: 2px; }
+  .bar i { flex: none; display: block; width: 100%; }
+  .bar:hover, .bar:focus-visible { background: #a4a4ff20; }
+  .bar:hover i, .bar:focus-visible i { filter: brightness(1.45); }
+  .axis { display: grid; grid-template-columns: repeat(4, 1fr); padding-top: 3px; color: #9f9daf; font-size: 9px; }
+  .chart-detail { color: #b7baff; font-size: 10px; min-height: 15px; margin: 4px 0 0; white-space: nowrap; }
+  .app-list { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 7px; }
+  .app-list li { display: flex; gap: 8px; align-items: center; font-variant-numeric: tabular-nums; font-size: 11px; color: #d2d1e0; }
+  .app-icon { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 5px; font-size: 14px; color: #fff; }
+  .app-icon.safari { background: linear-gradient(160deg, #36afff, #2265e8); }
+  .app-icon.finder { background: linear-gradient(90deg, #269cfc 50%, #77afff 50%); }
+  .app-icon.music { background: linear-gradient(150deg, #fe6079, #eb3258); }
+
+  .agenda { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+  .agenda section { min-width: 0; }
+  .agenda section + section { border-left: 1px solid #23232d; padding-left: 15px; }
+  .day { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; margin: 0 0 8px; font-size: 13px; }
+  .day time { color: #9999ad; font-size: 10px; font-weight: 500; }
+  .event { display: block; text-align: left; position: relative; width: 100%; border: 0; border-radius: 5px; background: transparent; padding: 5px 3px 5px 10px; margin-bottom: 3px; }
+  .event::before { content: ""; position: absolute; top: 7px; left: 0; width: 2px; height: 23px; border-radius: 2px; background: var(--event-color, #69c9ec); }
+  .event:hover, .event[aria-pressed="true"] { background: #ffffff13; }
+  .event strong, .event time { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .event strong { font-size: 13px; font-weight: 600; }
+  .event time { margin-top: 2px; color: #a09eb5; font-size: 11px; font-variant-numeric: tabular-nums; }
+
+  .lock-wing { position: absolute; left: 8px; top: 0; width: 20px; height: 31px; overflow: hidden; }
+  .lock-mark { position: absolute; left: 3px; top: 7px; width: 14px; height: 17px; visibility: hidden; color: #f2f2ff; }
+  .lock-mark::before { content: ""; position: absolute; left: 3.5px; top: 0; width: 7px; height: 10px; border: 1.5px solid currentColor; border-radius: 5px 5px 0 0; }
+  .lock-mark::after { content: ""; position: absolute; inset: 6px 0 0; border-radius: 2px; background: currentColor; }
+  .island[data-locked="true"] .lock-mark, .island[data-unlocking="true"] .lock-mark { visibility: visible; }
+  .island[data-locked="true"] .lock-mark { animation: lock-in 360ms cubic-bezier(.23,.95,.32,1.18) 40ms both; }
+  .island[data-unlocking="true"] .lock-mark { animation: unlock-out 230ms ease-in-out both; }
+  @keyframes lock-in { from { transform: translateX(20px); } to { transform: translateX(0); } }
+  @keyframes unlock-out { from { transform: translateX(0); } to { transform: translateX(20px); } }
+  .lock-clock { position: absolute; z-index: 1; inset: 19% 0 auto; text-align: center; color: #b4b6ff; opacity: 0; visibility: hidden; transition: opacity 160ms ease, visibility 0ms linear 160ms; }
+  .desktop[data-locked="true"] .lock-clock { opacity: 1; visibility: visible; transition-delay: 0ms; }
+  .lock-clock .date { font-size: clamp(13px, 2.3vw, 22px); font-weight: 590; letter-spacing: .06em; }
+  .lock-clock .time { display: block; margin-top: 5px; font-size: clamp(66px, 11vw, 126px); line-height: 1; font-weight: 650; letter-spacing: -.075em; }
+  .preview-footer { margin-top: 13px; color: #a8aac0; font-size: 12px; line-height: 1.55; }
+  .preview-footer p { margin: 0; }
+  .kbd { font-size: 10px; padding: 1px 5px; border: 1px solid #3c3e51; border-radius: 4px; }
+  #action-note { color: #c3c6fa; min-height: 19px; }
+  .desktop[data-reduce="true"] *, .desktop[data-reduce="true"] *::before { animation: none !important; }
+  .desktop[data-reduce="true"] .island[data-locked="true"] .lock-mark { animation: quiet-in 120ms ease both !important; }
+  .desktop[data-reduce="true"] .island[data-unlocking="true"] .lock-mark { animation: quiet-in 120ms ease reverse both !important; }
+  .desktop[data-reduce="true"] .page.page-in { animation: quiet-in 70ms ease !important; }
+  @keyframes quiet-in { from { opacity: 0; } }
+  @media (max-width: 640px) {
+    .preview { width: calc(100% - 28px); padding-top: 23px; }
+    .heading span:last-child { font-size: 12px; }
+    .desktop { height: 435px; }
+    .desktop .menu-right { padding-right: 0; }
+    .island[data-expanded="true"] { --shoulder: 9px; }
+    .island[data-expanded="true"] .album-cover { left: 16px; }
+    .island-content { left: 16px; right: 16px; }
+    .activity { gap: 9px; }
+    .app-list li { gap: 4px; }
+    .agenda { gap: 9px; }
+    .agenda section + section { padding-left: 9px; }
+  }
+  @media (pointer: coarse) {
+    .dot { width: 42px; }
+    .media-button { width: 43px; height: 40px; }
+  }
+</style>
+</head>
+<body>
+<main class="preview">
+  <header class="preview-header">
+    <div class="heading">
+      <span class="mark" aria-hidden="true"></span>
+      <h1>NotchDay</h1>
+      <span>交互预览</span>
+    </div>
+    <div class="demo-controls" aria-label="预览控制">
+      <button type="button" class="demo-button" id="demo" aria-pressed="false">自动演示</button>
+      <button type="button" class="demo-button" id="lock" aria-pressed="false">锁屏</button>
+      <button type="button" class="demo-button" id="reduce" aria-pressed="false">减少动态效果</button>
+    </div>
+  </header>
+
+  <div class="desktop" id="desktop" data-locked="false" data-reduce="false" aria-label="NotchDay 模拟桌面">
+    <div class="wallpaper" aria-hidden="true">
+      <span class="ribbon ribbon-a"></span><span class="ribbon ribbon-b"></span><span class="ribbon ribbon-c"></span>
+    </div>
+    <div class="menu-bar" aria-hidden="true">
+      <span class="menu-left">音乐</span>
+      <span class="menu-right"><i class="wifi"></i><i class="battery"></i><time>14:27</time></span>
+    </div>
+    <div class="lock-clock" aria-hidden="true">
+      <div class="date">11 月 18 日 星期三</div>
+      <time class="time">14:27</time>
+    </div>
+    <div class="island" id="island" data-page="music" data-expanded="false" data-playing="true" data-locked="false" data-unlocking="false">
+      <button type="button" class="notch-trigger" id="notch-trigger" aria-controls="island-content" aria-label="展开灵动岛" aria-expanded="false"></button>
+      <div class="album-cover" id="cover" aria-hidden="true"></div>
+      <div class="signal compact-signal" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <span class="lock-wing" aria-hidden="true"><span class="lock-mark"></span></span>
+      <div class="island-content" id="island-content" inert>
+        <section class="page" id="music-panel" role="tabpanel" aria-labelledby="music-dot">
+          <div class="song" id="song-gesture">
+            <div class="song-copy" id="song-copy">
+              <strong class="song-name" id="song-name">Night Signal</strong>
+              <span class="artist" id="artist-name">Mira Vale</span>
+            </div>
+            <span class="signal player-signal" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          </div>
+          <div class="seek-row">
+            <output id="elapsed" for="seek">1:24</output>
+            <input id="seek" class="seek" type="range" min="0" max="216" value="84" aria-label="播放进度">
+            <output id="duration">3:36</output>
+          </div>
+          <div class="transport" aria-label="播放控制">
+            <button type="button" class="media-button" id="shuffle" aria-label="随机播放" aria-pressed="false" title="随机播放"><span class="shuffle-symbol" aria-hidden="true">⤨</span></button>
+            <button type="button" class="media-button previous" id="previous" aria-label="上一首" title="上一首"><i class="skip-glyph" aria-hidden="true"></i></button>
+            <button type="button" class="media-button" id="play" aria-label="暂停" title="暂停"><i class="play-glyph" aria-hidden="true"></i></button>
+            <button type="button" class="media-button" id="next" aria-label="下一首" title="下一首"><i class="skip-glyph" aria-hidden="true"></i></button>
+            <button type="button" class="media-button" id="output" aria-expanded="false" aria-controls="output-menu" aria-label="音频输出" title="音频输出"><i class="output-glyph" aria-hidden="true"></i></button>
+          </div>
+          <div class="output-menu" id="output-menu" aria-label="模拟音频输出" hidden>
+            <button type="button" aria-pressed="true">MacBook Air 扬声器</button>
+            <button type="button" aria-pressed="false">AirPods</button>
+          </div>
+        </section>
+
+        <section class="page activity" id="activity-panel" role="tabpanel" aria-labelledby="activity-dot" hidden>
+          <div>
+            <h2 class="small-header">本机活动</h2>
+            <strong class="total">2 小时 59 分钟</strong>
+            <div class="chart-wrap" aria-label="每小时 App 使用时间">
+              <span class="chart-max">60 分</span>
+              <div class="chart-track" id="chart-track"></div>
+              <div class="axis" aria-hidden="true"><span>0 时</span><span>6 时</span><span>12 时</span><span>18 时</span></div>
+            </div>
+            <p class="chart-detail" id="chart-detail" aria-live="polite"></p>
+          </div>
+          <div>
+            <h2 class="small-header">常用 App</h2>
+            <ul class="app-list">
+              <li><span class="app-icon safari" aria-label="Safari">◈</span><span>54 分钟</span></li>
+              <li><span class="app-icon finder" aria-label="访达">⌁</span><span>29 分钟</span></li>
+              <li><span class="app-icon music" aria-label="音乐">♪</span><span>26 分钟</span></li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="page agenda" id="schedule-panel" role="tabpanel" aria-labelledby="schedule-dot" hidden>
+          <section>
+            <h2 class="day">今天 <time datetime="2026-11-18">11 月 18 日</time></h2>
+            <button class="event" type="button" aria-pressed="false" style="--event-color:#55cfed"><strong>项目讨论</strong><time>15:00–16:00</time></button>
+            <button class="event" type="button" aria-pressed="false" style="--event-color:#8c96ff"><strong>阅读时间</strong><time>16:30</time></button>
+          </section>
+          <section>
+            <h2 class="day">明天 <time datetime="2026-11-19">11 月 19 日</time></h2>
+            <button class="event" type="button" aria-pressed="false" style="--event-color:#b991ff"><strong>产品评审</strong><time>08:30–09:15</time></button>
+            <button class="event" type="button" aria-pressed="false" style="--event-color:#55cfed"><strong>整理笔记</strong><time>10:00</time></button>
+          </section>
+        </section>
+
+        <div class="pages-nav" role="tablist" aria-label="灵动岛页面">
+          <button class="dot" type="button" role="tab" id="music-dot" data-page="music" aria-label="音乐" aria-controls="music-panel" aria-selected="true" title="音乐"></button>
+          <button class="dot" type="button" role="tab" id="activity-dot" data-page="activity" aria-label="App 使用时长" aria-controls="activity-panel" aria-selected="false" title="App 使用时长" tabindex="-1"></button>
+          <button class="dot" type="button" role="tab" id="schedule-dot" data-page="schedule" aria-label="日程" aria-controls="schedule-panel" aria-selected="false" title="日程" tabindex="-1"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="preview-footer">
+    <p>悬停或点击刘海 · 点击圆点切页 · <kbd class="kbd">Esc</kbd> 收起</p>
+    <p id="action-note" aria-live="polite">演示使用示例数据</p>
+  </footer>
+</main>
+
+<script>
+  const byId = id => document.getElementById(id);
+  const desktop = byId('desktop');
+  const island = byId('island');
+  const content = byId('island-content');
+  const trigger = byId('notch-trigger');
+  const note = byId('action-note');
+  const seek = byId('seek');
+  const demoButton = byId('demo');
+  const lockButton = byId('lock');
+  const reduceButton = byId('reduce');
+  const outputMenu = byId('output-menu');
+  const outputButton = byId('output');
+  const pageNames = ['music', 'activity', 'schedule'];
+  const tabs = [...document.querySelectorAll('.dot')];
+  const panels = pageNames.map(name => byId(name + '-panel'));
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const tracks = [
+    { title: 'Night Signal', artist: 'Mira Vale', duration: 216, colors: ['#263eae', '#4c60db', '#11194c'] },
+    { title: 'Soft Orbit', artist: 'Mira Vale', duration: 193, colors: ['#56399d', '#9c6ad2', '#281947'] },
+    { title: 'Low Tide', artist: 'Arden Coast', duration: 238, colors: ['#116578', '#36a29c', '#0c303b'] }
+  ];
+  const hoverDelay = 180;
+  const leaveDelay = 250;
+  let trackIndex = 0;
+  let elapsed = 84;
+  let playing = true;
+  let shuffle = false;
+  let page = 0;
+  let expanded = false;
+  let locked = false;
+  let dragging = false;
+  let pointerInside = false;
+  let suppressHover = false;
+  let openTimer, closeTimer, playbackTimer, unlockTimer, demoTimer;
+  let demoActive = false;
+  let demoStep = 0;
+
+  function formatTime(seconds) {
+    const value = Math.floor(seconds);
+    return Math.floor(value / 60) + ':' + String(value % 60).padStart(2, '0');
+  }
+
+  function updateProgress(value = elapsed) {
+    seek.value = value;
+    seek.style.setProperty('--progress', 100 * value / tracks[trackIndex].duration + '%');
+    seek.setAttribute('aria-valuetext', formatTime(value));
+    byId('elapsed').value = formatTime(value);
+  }
+
+  function syncPlaybackTimer() {
+    clearInterval(playbackTimer);
+    if (!expanded || locked || page !== 0 || !playing || document.hidden) return;
+    playbackTimer = setInterval(() => {
+      if (dragging) return;
+      elapsed += 1;
+      if (elapsed >= tracks[trackIndex].duration) advanceTrack(1);
+      else updateProgress();
+    }, 1000);
+  }
+
+  function renderTrack(animate = false) {
+    const track = tracks[trackIndex];
+    byId('song-name').textContent = track.title;
+    byId('artist-name').textContent = track.artist;
+    byId('duration').value = formatTime(track.duration);
+    seek.max = track.duration;
+    const cover = byId('cover');
+    ['--cover-sky', '--cover-ridge', '--cover-water'].forEach((key, index) => cover.style.setProperty(key, track.colors[index]));
+    updateProgress();
+    if (animate) {
+      const song = byId('song-copy');
+      song.classList.remove('changed');
+      requestAnimationFrame(() => song.classList.add('changed'));
+    }
+  }
+
+  function advanceTrack(direction) {
+    const step = shuffle && direction > 0 ? 2 : direction;
+    trackIndex = (trackIndex + step + tracks.length) % tracks.length;
+    elapsed = 0;
+    renderTrack(true);
+  }
+
+  function setOutputOpen(open) {
+    outputMenu.hidden = !open;
+    outputButton.setAttribute('aria-expanded', String(open));
+  }
+
+  function setExpanded(next) {
+    clearTimeout(openTimer);
+    clearTimeout(closeTimer);
+    if (locked || expanded === next) return;
+    expanded = next;
+    island.dataset.expanded = String(next);
+    trigger.setAttribute('aria-expanded', String(next));
+    trigger.setAttribute('aria-label', next ? '收起灵动岛' : '展开灵动岛');
+    if (!next && content.contains(document.activeElement)) trigger.focus();
+    content.inert = !next;
+    if (!next) setOutputOpen(false);
+    syncPlaybackTimer();
+  }
+
+  function selectPage(next, focus = false) {
+    const direction = next >= page ? '8px' : '-8px';
+    page = next;
+    island.dataset.page = pageNames[next];
+    panels.forEach((panel, index) => {
+      panel.hidden = next !== index;
+      panel.classList.remove('page-in');
+      tabs[index].setAttribute('aria-selected', String(next === index));
+      tabs[index].tabIndex = next === index ? 0 : -1;
+    });
+    panels[next].style.setProperty('--slide', direction);
+    requestAnimationFrame(() => {
+      if (page === next) panels[next].classList.add('page-in');
+    });
+    if (focus) tabs[next].focus();
+    if (next !== 0) setOutputOpen(false);
+    syncPlaybackTimer();
+  }
+
+  function toggleLock(next) {
+    clearTimeout(unlockTimer);
+    if (next === locked) return;
+    if (next) {
+      setExpanded(false);
+      island.dataset.unlocking = 'false';
+    } else {
+      island.dataset.unlocking = 'true';
+      unlockTimer = setTimeout(() => { island.dataset.unlocking = 'false'; }, desktop.dataset.reduce === 'true' ? 125 : 280);
+    }
+    locked = next;
+    desktop.dataset.locked = String(next);
+    island.dataset.locked = String(next);
+    trigger.disabled = next;
+    lockButton.textContent = next ? '解锁' : '锁屏';
+    lockButton.setAttribute('aria-pressed', String(next));
+    note.textContent = next ? '锁屏预览' : '演示使用示例数据';
+    syncPlaybackTimer();
+  }
+
+  function stopDemo() {
+    if (!demoActive) return;
+    clearTimeout(demoTimer);
+    demoActive = false;
+    demoButton.textContent = '自动演示';
+    demoButton.setAttribute('aria-pressed', 'false');
+  }
+
+  const demoSequence = [
+    [() => { toggleLock(false); setExpanded(false); selectPage(0); }, 680],
+    [() => setExpanded(true), 1750],
+    [() => selectPage(1), 1750],
+    [() => selectPage(2), 1750],
+    [() => toggleLock(true), 1600],
+    [() => toggleLock(false), 0]
+  ];
+
+  function runDemoStep() {
+    const [action, duration] = demoSequence[demoStep];
+    action();
+    demoStep += 1;
+    if (demoStep < demoSequence.length) demoTimer = setTimeout(runDemoStep, duration);
+    else stopDemo();
+  }
+
+  function scheduleClose() {
+    clearTimeout(closeTimer);
+    if (expanded && !pointerInside && !dragging && !demoActive) {
+      closeTimer = setTimeout(() => setExpanded(false), leaveDelay);
+    }
+  }
+
+  island.addEventListener('pointerenter', event => {
+    if (event.pointerType !== 'mouse') return;
+    pointerInside = true;
+    clearTimeout(closeTimer);
+    if (!demoActive && !locked && !expanded && !suppressHover) {
+      openTimer = setTimeout(() => setExpanded(true), hoverDelay);
+    }
+  });
+
+  island.addEventListener('pointerleave', event => {
+    if (event.pointerType !== 'mouse') return;
+    pointerInside = false;
+    suppressHover = false;
+    clearTimeout(openTimer);
+    scheduleClose();
+  });
+
+  trigger.addEventListener('click', () => {
+    stopDemo();
+    suppressHover = expanded;
+    setExpanded(!expanded);
+  });
+
+  desktop.addEventListener('pointerdown', event => {
+    if (island.contains(event.target)) {
+      stopDemo();
+    } else if (expanded) {
+      stopDemo();
+      setExpanded(false);
+    }
+  });
+
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    stopDemo();
+    if (!outputMenu.hidden) {
+      setOutputOpen(false);
+      outputButton.focus();
+      return;
+    }
+    suppressHover = pointerInside;
+    setExpanded(false);
+  });
+
+  tabs.forEach((tab, index) => {
+    tab.addEventListener('click', () => {
+      stopDemo();
+      selectPage(index);
+    });
+    tab.addEventListener('keydown', event => {
+      const steps = { ArrowLeft: -1, ArrowRight: 1 };
+      if (!(event.key in steps)) return;
+      event.preventDefault();
+      stopDemo();
+      selectPage((index + steps[event.key] + tabs.length) % tabs.length, true);
+    });
+  });
+
+  lockButton.addEventListener('click', () => {
+    stopDemo();
+    toggleLock(!locked);
+  });
+
+  function setReducedMotion(value) {
+    desktop.dataset.reduce = String(value);
+    reduceButton.setAttribute('aria-pressed', String(value));
+  }
+
+  setReducedMotion(reducedMotion.matches);
+  reducedMotion.addEventListener('change', event => setReducedMotion(event.matches));
+  reduceButton.addEventListener('click', () => setReducedMotion(desktop.dataset.reduce !== 'true'));
+
+  demoButton.addEventListener('click', () => {
+    if (demoActive) {
+      stopDemo();
+      return;
+    }
+    clearTimeout(openTimer);
+    clearTimeout(closeTimer);
+    demoActive = true;
+    demoStep = 0;
+    demoButton.textContent = '停止演示';
+    demoButton.setAttribute('aria-pressed', 'true');
+    runDemoStep();
+  });
+
+  byId('play').addEventListener('click', event => {
+    playing = !playing;
+    island.dataset.playing = String(playing);
+    event.currentTarget.setAttribute('aria-label', playing ? '暂停' : '播放');
+    event.currentTarget.title = playing ? '暂停' : '播放';
+    syncPlaybackTimer();
+  });
+  byId('previous').addEventListener('click', () => advanceTrack(-1));
+  byId('next').addEventListener('click', () => advanceTrack(1));
+  byId('shuffle').addEventListener('click', event => {
+    shuffle = !shuffle;
+    event.currentTarget.setAttribute('aria-pressed', String(shuffle));
+  });
+  outputButton.addEventListener('click', () => setOutputOpen(outputMenu.hidden));
+  const outputOptions = [...outputMenu.querySelectorAll('button')];
+  outputOptions.forEach(option => option.addEventListener('click', () => {
+    outputOptions.forEach(item => item.setAttribute('aria-pressed', String(item === option)));
+    note.textContent = '模拟音频输出 · ' + option.textContent;
+    setOutputOpen(false);
+    outputButton.focus();
+  }));
+
+  seek.addEventListener('pointerdown', () => {
+    dragging = true;
+    clearTimeout(closeTimer);
+  });
+  seek.addEventListener('input', () => {
+    const value = Number(seek.value);
+    if (!dragging) elapsed = value;
+    updateProgress(value);
+  });
+  seek.addEventListener('change', () => { elapsed = Number(seek.value); });
+  for (const eventName of ['pointerup', 'pointercancel']) {
+    window.addEventListener(eventName, () => {
+      if (!dragging) return;
+      dragging = false;
+      elapsed = Number(seek.value);
+      scheduleClose();
+    });
+  }
+
+  let swipeDistance = 0;
+  let lastWheel = 0;
+  let swipeConsumed = false;
+  byId('song-gesture').addEventListener('wheel', event => {
+    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+    event.preventDefault();
+    const now = performance.now();
+    if (now - lastWheel > 220) {
+      swipeDistance = 0;
+      swipeConsumed = false;
+    }
+    lastWheel = now;
+    swipeDistance += event.deltaX * (event.deltaMode === 1 ? 14 : 1);
+    if (!swipeConsumed && Math.abs(swipeDistance) >= 55) {
+      swipeConsumed = true;
+      stopDemo();
+      advanceTrack(swipeDistance > 0 ? 1 : -1);
+    }
+  }, { passive: false });
+
+  const hourly = [
+    [0, [0,0,0,8]], [8, [0,5,0,8]], [9, [18,10,10,16]], [10, [10,5,6,10]],
+    [11, [6,0,2,7]], [13, [14,7,8,9]], [14, [6,2,0,12]]
+  ];
+  const chartDetail = byId('chart-detail');
+  const chartColors = ['#2f9deb', '#6967e6', '#a0a5ff', '#42516e'];
+  for (const [hour, parts] of hourly) {
+    const bar = document.createElement('button');
+    const minutes = parts.reduce((sum, time) => sum + time, 0);
+    const label = String(hour).padStart(2, '0') + ':00–' + String(hour + 1).padStart(2, '0') + ':00 · ' + minutes + ' 分钟';
+    bar.type = 'button';
+    bar.className = 'bar';
+    bar.style.gridColumn = hour + 1;
+    bar.setAttribute('aria-label', label);
+    for (const [index, value] of parts.entries()) {
+      const segment = document.createElement('i');
+      segment.style.height = 100 * value / 60 + '%';
+      segment.style.backgroundColor = chartColors[index];
+      bar.append(segment);
+    }
+    for (const event of ['pointerenter', 'focus', 'click']) {
+      bar.addEventListener(event, () => { chartDetail.textContent = label; });
+    }
+    bar.addEventListener('pointerleave', () => {
+      if (document.activeElement !== bar) chartDetail.textContent = '';
+    });
+    bar.addEventListener('blur', () => { chartDetail.textContent = ''; });
+    byId('chart-track').append(bar);
+  }
+
+  const eventRows = [...document.querySelectorAll('.event')];
+  eventRows.forEach(row => row.addEventListener('click', () => {
+    eventRows.forEach(item => item.setAttribute('aria-pressed', String(item === row)));
+    note.textContent = '日程预览 · ' + row.querySelector('strong').textContent + ' · ' + row.querySelector('time').textContent;
+  }));
+
+  document.addEventListener('visibilitychange', syncPlaybackTimer);
+  renderTrack();
+</script>
+</body>
+</html>
