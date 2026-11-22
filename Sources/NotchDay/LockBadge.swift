@@ -224,7 +224,7 @@ final class LockBadge {
 
     /// Pre-render the lock transition without drawing a second desktop surface.
     func stagePlayback(on display: NotchDisplay, playback: LockPlayback) {
-        guard !presenting, display.sizing.topBleed > 0 else { return }
+        guard !presenting, display.hasHardwareNotch else { return }
         let needsDraw = !playbackStaged || state.playback != playback || presentedSizing != display.sizing
         if needsDraw {
             state.playback = playback
@@ -247,7 +247,7 @@ final class LockBadge {
 
     @discardableResult
     func show(on display: NotchDisplay, playback: LockPlayback? = nil) -> Bool {
-        guard display.sizing.topBleed > 0 else { return false }
+        guard display.hasHardwareNotch else { return false }
         let needsEntry = !presenting || state.phase.open
         let ready = playbackStaged && state.playback == playback && presentedSizing == display.sizing
         let openingPhase: LockBadgePhase = playback == nil ? .hidden : .music

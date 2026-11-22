@@ -91,7 +91,7 @@ final class NotchController: NSObject {
             return
         }
         if systemLocked {
-            if let current = NotchDisplay.preferred(), current.sizing.topBleed > 0, current != display {
+            if let current = NotchDisplay.preferred(), current.hasHardwareNotch, current != display {
                 display = current
                 lockBadge.show(on: current)
             }
@@ -122,7 +122,7 @@ final class NotchController: NSObject {
             panel.contentView = NSHostingView(rootView: view)
         }
         if panel.frame != display.panelFrame { panel.setFrame(display.panelFrame, display: true, animate: false) }
-        if !desktopPanelFollowsNotch, display.sizing.topBleed > 0 {
+        if !desktopPanelFollowsNotch, display.hasHardwareNotch {
             let fallback = panel.collectionBehavior
             panel.collectionBehavior = [.ignoresCycle]
             desktopPanelFollowsNotch = lockBadge.attachDesktopPanel(panel)
@@ -262,7 +262,7 @@ final class NotchController: NSObject {
                 for _ in 0..<10 {
                     guard let self, !self.systemLocked else { return }
                     let current = NotchDisplay.preferred()
-                    let canUseCurrent = self.display?.sizing.topBleed == 0 || current?.sizing.topBleed == 4
+                    let canUseCurrent = self.display?.hasHardwareNotch != true || current?.hasHardwareNotch == true
                     if let current, current == prior, canUseCurrent { break }
                     prior = current
                     try await Task.sleep(for: .milliseconds(150))
@@ -467,7 +467,7 @@ final class NotchController: NSObject {
     private func prepareLockPlayback() {
         guard !systemLocked, !restoring else { return }
         if model.desktopWingsVisible,
-           let display, let playback = lockPlayback(), display.sizing.topBleed > 0 {
+           let display, let playback = lockPlayback(), display.hasHardwareNotch {
             lockBadge.stagePlayback(on: display, playback: playback)
         } else {
             lockBadge.discardStagedPlayback()
@@ -504,6 +504,7 @@ struct NotchDisplay: Equatable {
     let anchor: CGPoint
     let sizing: NotchSizing
     let spaceIdentifier: String?
+    let hasHardwareNotch: Bool
 
     var panelFrame: CGRect {
         let size = sizing.maximumSize
@@ -517,6 +518,15 @@ struct NotchDisplay: Equatable {
         )
     }
 
+    static func availableTopBleed(above frame: CGRect, screenFrames: [CGRect]) -> CGFloat {
+        let maximum: CGFloat = 4
+        // AppKit uses a shared desktop. The overscan strip can land on a screen above this one.
+        return screenFrames.reduce(maximum) { available, other in
+            guard other.maxY > frame.maxY, other.maxX > frame.minX, other.minX < frame.maxX else { return available }
+            return min(available, max(0, other.minY - frame.maxY).rounded(.down))
+        }
+    }
+
     @MainActor
     static func preferred() -> NotchDisplay? {
         let screens = NSScreen.screens
@@ -527,6 +537,7 @@ struct NotchDisplay: Equatable {
         let notched = screens.first { $0.safeAreaInsets.top > 0 && $0.auxiliaryTopLeftArea != nil }
         guard let screen = notched ?? builtIn ?? NSScreen.main else { return nil }
         let frame = screen.frame
+        let hasHardwareNotch = notched != nil
         var width: CGFloat = 136
         var anchorX = frame.midX
         if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea, right.minX > left.maxX {
@@ -543,9 +554,10 @@ struct NotchDisplay: Equatable {
                 hardwareHeight: max(screen.safeAreaInsets.top, NSStatusBar.system.thickness),
                 availableWidth: max(220, frame.width - 50),
                 screenHeight: frame.height,
-                topBleed: screen.safeAreaInsets.top > 0 && screen.auxiliaryTopLeftArea != nil ? 4 : 0
+                topBleed: hasHardwareNotch ? availableTopBleed(above: frame, screenFrames: screens.map(\.frame)) : 0
             ),
-            spaceIdentifier: spaceIdentifier
+            spaceIdentifier: spaceIdentifier,
+            hasHardwareNotch: hasHardwareNotch
         )
     }
 }
