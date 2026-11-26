@@ -22,6 +22,17 @@ enum SystemLinks {
         openSettings("com.apple.Sound-Settings.extension")
     }
 
+    static func openStorageSettings() {
+        openSettings("com.apple.settings.Storage")
+    }
+
+    static func openStorageLogFolder() {
+        StorageLog.prepare()
+        if !NSWorkspace.shared.open(StorageLog.directory) {
+            NSWorkspace.shared.activateFileViewerSelecting([StorageLog.directory])
+        }
+    }
+
     private static func openSettings(_ pane: String) {
         if let url = URL(string: "x-apple.systempreferences:" + pane), NSWorkspace.shared.open(url) { return }
         openApp("com.apple.systempreferences")

@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NotchDay 设计稿 · 纵轴刻度与聚合粒度</title>
+<style>
+  :root { --ink:#1d1d1f; --muted:#6e6e73; --accent:#8a8df9; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    padding: 40px 40px 64px; background: #eef0f4; color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .stage { max-width: 960px; margin: 0 auto; display: flex; flex-direction: column; gap: 36px; }
+  .scene-label { font-size: 12px; color: var(--muted); margin: 0 0 10px 2px; }
+  .scene-label b { font-weight: 500; color: var(--ink); }
+
+  .desktop {
+    position: relative; height: 330px; border-radius: 14px; overflow: hidden;
+    background:
+      radial-gradient(680px 380px at 18% 12%, #f2f5fb 0%, rgba(242,245,251,0) 62%),
+      radial-gradient(620px 420px at 88% 88%, #dfe6f3 0%, rgba(223,230,243,0) 60%),
+      #cdd6e6;
+  }
+  .menubar {
+    position: absolute; inset: 0 0 auto 0; height: 32px; display: flex; align-items: center;
+    justify-content: space-between; padding: 0 18px; font-size: 12px; color: rgba(0,0,0,.78);
+    background: rgba(255,255,255,.42); backdrop-filter: blur(18px);
+  }
+  .menubar .left, .menubar .right { display: flex; align-items: center; gap: 16px; }
+  .menubar .right { gap: 14px; font-variant-numeric: tabular-nums; }
+  .glyph { width: 14px; height: 14px; opacity: .72; }
+
+  .island {
+    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    width: 392px; padding: 40px 19px 18px; background: #000; color: #fff;
+    border-radius: 0 0 26px 26px; box-shadow: 0 24px 48px rgba(0,0,0,.28);
+  }
+  .island-row { display: flex; gap: 12px; align-items: flex-start; }
+  .rail { width: 18px; padding-top: 4px; display: flex; flex-direction: column; }
+  .rail i { height: 18px; display: flex; align-items: center; justify-content: center; }
+  .rail i::after { content:""; width:5px; height:5px; border-radius:50%; background: rgba(255,255,255,.32); }
+  .rail i.on::after { background:#fff; }
+  .cards { flex: 1; min-width: 0; }
+
+  .hdr { display: flex; align-items: center; gap: 9px; height: 27px; }
+  .hdr .ico { width: 15px; height: 15px; display: flex; align-items: center; justify-content: center; }
+  .hdr .name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+  .hdr .go { margin-left: auto; opacity: .57; display: flex; }
+
+  .storage { height: 156px; }
+  .statrow { display: flex; align-items: baseline; margin-top: 1px; }
+  .big { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .of { font-size: 11px; color: rgba(255,255,255,.55); margin-left: 5px; }
+  .delta { margin-left: auto; font-size: 11px; color: rgba(255,255,255,.65); font-variant-numeric: tabular-nums; }
+  .delta em { font-style: normal; color: rgba(255,255,255,.45); }
+
+  .chartwrap { position: relative; height: 54px; margin-top: 6px; }
+  .chartwrap svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .ytick {
+    position: absolute; left: 0; width: 26px; text-align: right; transform: translateY(-50%);
+    font-size: 10px; color: rgba(255,255,255,.45); font-variant-numeric: tabular-nums;
+  }
+  .cursor { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.22); }
+  .dot { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1.5px var(--accent); }
+  .tip {
+    position: absolute; font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 5px;
+    background: rgba(255,255,255,.18); color: #fff; white-space: nowrap;
+    font-variant-numeric: tabular-nums; backdrop-filter: blur(6px);
+  }
+  .axis { display: flex; justify-content: space-between; margin-top: 3px; padding-left: 34px; font-size: 10px; color: rgba(255,255,255,.45); }
+  .pills { display: flex; gap: 4px; margin-top: 8px; }
+  .pills span {
+    font-size: 10px; line-height: 18px; padding: 0 7px; border-radius: 9px;
+    color: rgba(255,255,255,.55); background: rgba(255,255,255,.06);
+  }
+  .pills span.on { color: #fff; background: rgba(255,255,255,.18); }
+  .pills span.off { color: rgba(255,255,255,.24); background: rgba(255,255,255,.03); }
+
+  .note { font-size: 12px; color: var(--muted); margin: 10px 0 0 2px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <section>
+    <p class="scene-label"><b>场景 1</b> · 24 小时：逐小时一个点（24 点）</p>
+    <div class="desktop">
+      <div class="menubar">
+        <div class="left"><span>Finder</span><span>文件</span><span>编辑</span><span>显示</span><span>前往</span><span>窗口</span></div>
+        <div class="right">
+          <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9v6h4l5 4V5L8 9H4z"/></svg>
+          <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12a7 7 0 0 1 14 0M8.5 15a4 4 0 0 1 7 0"/><circle cx="12" cy="18.5" r="1.2" fill="currentColor" stroke="none"/></svg>
+          <span>周四 20:54</span>
+        </div>
+      </div>
+      <div class="island">
+        <div class="island-row">
+          <div class="rail"><i></i><i></i><i></i><i class="on"></i></div>
+          <div class="cards">
+            <div class="storage">
+              <div class="hdr">
+                <span class="ico" style="color:var(--accent)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4.5" width="18" height="15" rx="3"/><circle cx="16.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><path d="M3 12h13"/></svg>
+                </span>
+                <span class="name">储存空间</span>
+                <span class="go"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+              </div>
+              <div class="statrow">
+                <span class="big">143.2 GB</span><span class="of">已用 / 995 GB</span>
+                <span class="delta"><em>较 1 天前</em> +0.8 GB</span>
+              </div>
+              <div class="chartwrap">
+                <svg viewBox="0 0 324 54" preserveAspectRatio="none">
+                  <path d="M34 6H324M34 27H324M34 48H324" stroke="rgba(255,255,255,.07)" stroke-width="1" fill="none"/>
+                  <path d="M34.0 36.5C36.1 35.8 42.4 32.9 46.6 32.8C50.8 32.6 55.0 36.0 59.2 35.4C63.4 34.8 67.6 30.9 71.8 29.1C76.0 27.4 80.2 25.3 84.4 24.9C88.6 24.5 92.8 25.6 97.0 26.5C101.2 27.4 105.4 30.2 109.7 30.1C113.9 30.1 118.1 27.6 122.3 26.0C126.5 24.3 130.7 21.8 134.9 20.2C139.1 18.5 143.3 16.1 147.5 16.0C151.7 15.9 155.9 18.6 160.1 19.6C164.3 20.7 168.5 22.4 172.7 22.3C176.9 22.1 181.1 20.0 185.3 18.6C189.5 17.2 193.7 15.2 197.9 13.9C202.1 12.6 206.3 10.9 210.5 10.7C214.7 10.6 218.9 12.1 223.1 12.8C227.3 13.5 231.5 15.1 235.7 14.9C239.9 14.7 244.1 12.7 248.3 11.8C252.6 10.8 256.8 9.2 261.0 9.1C265.2 9.1 269.4 10.7 273.6 11.2C277.8 11.8 282.0 12.5 286.2 12.3C290.4 12.1 294.6 10.9 298.8 10.2C303.0 9.5 307.2 8.1 311.4 8.1C315.6 8.1 321.9 9.9 324.0 10.2L324 48L34 48Z" fill="rgba(138,141,249,.20)"/>
+                  <path d="M34.0 36.5C36.1 35.8 42.4 32.9 46.6 32.8C50.8 32.6 55.0 36.0 59.2 35.4C63.4 34.8 67.6 30.9 71.8 29.1C76.0 27.4 80.2 25.3 84.4 24.9C88.6 24.5 92.8 25.6 97.0 26.5C101.2 27.4 105.4 30.2 109.7 30.1C113.9 30.1 118.1 27.6 122.3 26.0C126.5 24.3 130.7 21.8 134.9 20.2C139.1 18.5 143.3 16.1 147.5 16.0C151.7 15.9 155.9 18.6 160.1 19.6C164.3 20.7 168.5 22.4 172.7 22.3C176.9 22.1 181.1 20.0 185.3 18.6C189.5 17.2 193.7 15.2 197.9 13.9C202.1 12.6 206.3 10.9 210.5 10.7C214.7 10.6 218.9 12.1 223.1 12.8C227.3 13.5 231.5 15.1 235.7 14.9C239.9 14.7 244.1 12.7 248.3 11.8C252.6 10.8 256.8 9.2 261.0 9.1C265.2 9.1 269.4 10.7 273.6 11.2C277.8 11.8 282.0 12.5 286.2 12.3C290.4 12.1 294.6 10.9 298.8 10.2C303.0 9.5 307.2 8.1 311.4 8.1C315.6 8.1 321.9 9.9 324.0 10.2" fill="none" stroke="#8a8df9" stroke-width="1.6" stroke-linecap="round"/>
+                  <circle cx="324" cy="10.2" r="2.6" fill="#8a8df9"/>
+                </svg>
+                <div class="ytick" style="top:6px">144</div>
+                <div class="ytick" style="top:27px">140</div>
+                <div class="ytick" style="top:48px">136</div>
+              </div>
+              <div class="axis"><span>昨天 20:00</span><span>08:00</span><span>现在</span></div>
+              <div class="pills"><span class="on">1天</span><span>7天</span><span>1月</span><span>3月</span><span>6月</span><span>1年</span><span>全部</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="note">纵轴取当前区间的最小/最大值向外取整，三条刻度：上、中、下。标签占左侧 34pt，绘图区相应右移。</p>
+  </section>
+
+  <section>
+    <p class="scene-label"><b>场景 2</b> · 1 个月：每天取当天最后一次采样（30 点）</p>
+    <div class="desktop">
+      <div class="menubar">
+        <div class="left"><span>Finder</span><span>文件</span><span>编辑</span><span>显示</span><span>前往</span><span>窗口</span></div>
+        <div class="right">
+          <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9v6h4l5 4V5L8 9H4z"/></svg>
+          <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12a7 7 0 0 1 14 0M8.5 15a4 4 0 0 1 7 0"/><circle cx="12" cy="18.5" r="1.2" fill="currentColor" stroke="none"/></svg>
+          <span>周四 20:54</span>
+        </div>
+      </div>
+      <div class="island">
+        <div class="island-row">
+          <div class="rail"><i></i><i></i><i></i><i class="on"></i></div>
+          <div class="cards">
+            <div class="storage">
+              <div class="hdr">
+                <span class="ico" style="color:var(--accent)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4.5" width="18" height="15" rx="3"/><circle cx="16.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><path d="M3 12h13"/></svg>
+                </span>
+                <span class="name">储存空间</span>
+                <span class="go"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+              </div>
+              <div class="statrow">
+                <span class="big">143.2 GB</span><span class="of">已用 / 995 GB</span>
+                <span class="delta"><em>较 1 个月前</em> +9.6 GB</span>
+              </div>
+              <div class="chartwrap">
+                <svg viewBox="0 0 324 54" preserveAspectRatio="none">
+                  <path d="M34 6H324M34 27H324M34 48H324" stroke="rgba(255,255,255,.07)" stroke-width="1" fill="none"/>
+                  <path d="M34.0 33.3C35.7 33.2 40.7 32.9 44.0 32.5C47.3 32.2 50.7 31.3 54.0 31.2C57.3 31.1 60.7 32.3 64.0 32.0C67.3 31.6 70.7 29.8 74.0 29.1C77.3 28.4 80.7 27.5 84.0 27.5C87.3 27.6 90.7 29.6 94.0 29.4C97.3 29.1 100.7 26.9 104.0 25.9C107.3 25.0 110.7 23.9 114.0 23.9C117.3 23.8 120.7 25.7 124.0 25.4C127.3 25.1 130.7 22.8 134.0 22.0C137.3 21.2 140.7 20.7 144.0 20.7C147.3 20.7 150.7 22.5 154.0 22.3C157.3 22.1 160.7 20.2 164.0 19.4C167.3 18.6 170.7 17.6 174.0 17.6C177.3 17.5 180.7 19.0 184.0 18.9C187.3 18.8 190.7 17.7 194.0 17.0C197.3 16.4 200.7 15.1 204.0 14.9C207.3 14.8 210.7 16.4 214.0 16.2C217.3 16.1 220.7 14.7 224.0 14.1C227.3 13.6 230.7 12.8 234.0 12.8C237.3 12.9 240.7 14.5 244.0 14.4C247.3 14.3 250.7 12.7 254.0 12.0C257.3 11.4 260.7 10.5 264.0 10.5C267.3 10.4 270.7 11.6 274.0 11.5C277.3 11.5 280.7 10.6 284.0 10.2C287.3 9.8 290.7 9.1 294.0 9.1C297.3 9.2 300.7 10.5 304.0 10.5C307.3 10.4 310.7 9.0 314.0 8.6C317.3 8.2 322.3 8.2 324.0 8.1L324 48L34 48Z" fill="rgba(138,141,249,.20)"/>
+                  <path d="M34.0 33.3C35.7 33.2 40.7 32.9 44.0 32.5C47.3 32.2 50.7 31.3 54.0 31.2C57.3 31.1 60.7 32.3 64.0 32.0C67.3 31.6 70.7 29.8 74.0 29.1C77.3 28.4 80.7 27.5 84.0 27.5C87.3 27.6 90.7 29.6 94.0 29.4C97.3 29.1 100.7 26.9 104.0 25.9C107.3 25.0 110.7 23.9 114.0 23.9C117.3 23.8 120.7 25.7 124.0 25.4C127.3 25.1 130.7 22.8 134.0 22.0C137.3 21.2 140.7 20.7 144.0 20.7C147.3 20.7 150.7 22.5 154.0 22.3C157.3 22.1 160.7 20.2 164.0 19.4C167.3 18.6 170.7 17.6 174.0 17.6C177.3 17.5 180.7 19.0 184.0 18.9C187.3 18.8 190.7 17.7 194.0 17.0C197.3 16.4 200.7 15.1 204.0 14.9C207.3 14.8 210.7 16.4 214.0 16.2C217.3 16.1 220.7 14.7 224.0 14.1C227.3 13.6 230.7 12.8 234.0 12.8C237.3 12.9 240.7 14.5 244.0 14.4C247.3 14.3 250.7 12.7 254.0 12.0C257.3 11.4 260.7 10.5 264.0 10.5C267.3 10.4 270.7 11.6 274.0 11.5C277.3 11.5 280.7 10.6 284.0 10.2C287.3 9.8 290.7 9.1 294.0 9.1C297.3 9.2 300.7 10.5 304.0 10.5C307.3 10.4 310.7 9.0 314.0 8.6C317.3 8.2 322.3 8.2 324.0 8.1" fill="none" stroke="#8a8df9" stroke-width="1.6" stroke-linecap="round"/>
+                  <circle cx="324" cy="8.1" r="2.6" fill="#8a8df9"/>
+                </svg>
+                <div class="ytick" style="top:6px">144</div>
+                <div class="ytick" style="top:27px">136</div>
+                <div class="ytick" style="top:48px">128</div>
+              </div>
+              <div class="axis"><span>10 月 27 日</span><span>11 月 11 日</span><span>现在</span></div>
+              <div class="pills"><span>1天</span><span>7天</span><span class="on">1月</span><span>3月</span><span>6月</span><span>1年</span><span>全部</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="note">每个自然日只保留当天最后一条记录；跨天不补点，缺失日直接连过去，不做插值。</p>
+  </section>
+
+  <section>
+    <p class="scene-label"><b>场景 3</b> · 1 年：每 7 天合并为一个点（52 点）+ 悬停</p>
+    <div class="desktop">
+      <div class="menubar">
+        <div class="left"><span>Finder</span><span>文件</span><span>编辑</span><span>显示</span><span>前往</span><span>窗口</span></div>
+        <div class="right">
+          <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9v6h4l5 4V5L8 9H4z"/></svg>
+          <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12a7 7 0 0 1 14 0M8.5 15a4 4 0 0 1 7 0"/><circle cx="12" cy="18.5" r="1.2" fill="currentColor" stroke="none"/></svg>
+          <span>周四 20:54</span>
+        </div>
+      </div>
+      <div class="island">
+        <div class="island-row">
+          <div class="rail"><i></i><i></i><i></i><i class="on"></i></div>
+          <div class="cards">
+            <div class="storage">
+              <div class="hdr">
+                <span class="ico" style="color:var(--accent)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4.5" width="18" height="15" rx="3"/><circle cx="16.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><path d="M3 12h13"/></svg>
+                </span>
+                <span class="name">储存空间</span>
+                <span class="go"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+              </div>
+              <div class="statrow">
+                <span class="big">143.2 GB</span><span class="of">已用 / 995 GB</span>
+                <span class="delta"><em>较 1 年前</em> +81.2 GB</span>
+              </div>
+              <div class="chartwrap">
+                <svg viewBox="0 0 324 54" preserveAspectRatio="none">
+                  <path d="M34 6H324M34 27H324M34 48H324" stroke="rgba(255,255,255,.07)" stroke-width="1" fill="none"/>
+                  <path d="M34.0 43.0C34.9 42.9 37.8 42.5 39.7 42.4C41.6 42.2 43.5 42.3 45.4 42.1C47.3 41.9 49.2 41.4 51.1 41.2C53.0 41.0 54.8 40.7 56.7 40.6C58.6 40.6 60.5 41.0 62.4 40.8C64.3 40.7 66.2 40.1 68.1 39.7C70.0 39.3 71.9 38.8 73.8 38.6C75.7 38.4 77.6 38.5 79.5 38.3C81.4 38.1 83.3 37.6 85.2 37.2C87.1 36.9 89.0 36.3 90.9 36.2C92.8 36.0 94.7 36.6 96.5 36.5C98.4 36.4 100.3 35.8 102.2 35.4C104.1 34.9 106.0 34.2 107.9 33.9C109.8 33.5 111.7 33.3 113.6 33.2C115.5 33.2 117.4 33.8 119.3 33.7C121.2 33.5 123.1 32.7 125.0 32.3C126.9 31.8 128.8 31.3 130.7 30.9C132.6 30.6 134.5 30.4 136.4 30.3C138.2 30.3 140.1 30.8 142.0 30.6C143.9 30.4 145.8 29.6 147.7 29.2C149.6 28.8 151.5 28.3 153.4 28.2C155.3 28.1 157.2 28.8 159.1 28.6C161.0 28.5 162.9 27.7 164.8 27.3C166.7 26.8 168.6 26.2 170.5 25.9C172.4 25.6 174.3 25.3 176.2 25.3C178.1 25.2 179.9 25.8 181.8 25.7C183.7 25.5 185.6 24.6 187.5 24.1C189.4 23.6 191.3 23.0 193.2 22.6C195.1 22.3 197.0 22.0 198.9 21.9C200.8 21.9 202.7 22.4 204.6 22.3C206.5 22.1 208.4 21.4 210.3 20.9C212.2 20.4 214.1 19.7 216.0 19.4C217.9 19.0 219.8 18.6 221.6 18.6C223.5 18.5 225.4 19.1 227.3 18.9C229.2 18.8 231.1 18.1 233.0 17.6C234.9 17.1 236.8 16.5 238.7 16.2C240.6 15.8 242.5 15.7 244.4 15.6C246.3 15.6 248.2 16.1 250.1 15.9C252.0 15.8 253.9 15.2 255.8 14.7C257.7 14.3 259.6 13.7 261.5 13.3C263.3 13.0 265.2 12.7 267.1 12.7C269.0 12.6 270.9 13.1 272.8 13.0C274.7 12.8 276.6 12.2 278.5 11.8C280.4 11.4 282.3 10.9 284.2 10.6C286.1 10.3 288.0 10.1 289.9 10.0C291.8 10.0 293.7 10.4 295.6 10.4C297.5 10.3 299.4 9.9 301.3 9.7C303.2 9.5 305.0 9.3 306.9 9.2C308.8 9.1 310.7 8.9 312.6 8.9C314.5 8.9 316.4 9.0 318.3 9.0C320.2 9.0 323.1 8.9 324.0 8.9L324 48L34 48Z" fill="rgba(138,141,249,.20)"/>
+                  <path d="M34.0 43.0C34.9 42.9 37.8 42.5 39.7 42.4C41.6 42.2 43.5 42.3 45.4 42.1C47.3 41.9 49.2 41.4 51.1 41.2C53.0 41.0 54.8 40.7 56.7 40.6C58.6 40.6 60.5 41.0 62.4 40.8C64.3 40.7 66.2 40.1 68.1 39.7C70.0 39.3 71.9 38.8 73.8 38.6C75.7 38.4 77.6 38.5 79.5 38.3C81.4 38.1 83.3 37.6 85.2 37.2C87.1 36.9 89.0 36.3 90.9 36.2C92.8 36.0 94.7 36.6 96.5 36.5C98.4 36.4 100.3 35.8 102.2 35.4C104.1 34.9 106.0 34.2 107.9 33.9C109.8 33.5 111.7 33.3 113.6 33.2C115.5 33.2 117.4 33.8 119.3 33.7C121.2 33.5 123.1 32.7 125.0 32.3C126.9 31.8 128.8 31.3 130.7 30.9C132.6 30.6 134.5 30.4 136.4 30.3C138.2 30.3 140.1 30.8 142.0 30.6C143.9 30.4 145.8 29.6 147.7 29.2C149.6 28.8 151.5 28.3 153.4 28.2C155.3 28.1 157.2 28.8 159.1 28.6C161.0 28.5 162.9 27.7 164.8 27.3C166.7 26.8 168.6 26.2 170.5 25.9C172.4 25.6 174.3 25.3 176.2 25.3C178.1 25.2 179.9 25.8 181.8 25.7C183.7 25.5 185.6 24.6 187.5 24.1C189.4 23.6 191.3 23.0 193.2 22.6C195.1 22.3 197.0 22.0 198.9 21.9C200.8 21.9 202.7 22.4 204.6 22.3C206.5 22.1 208.4 21.4 210.3 20.9C212.2 20.4 214.1 19.7 216.0 19.4C217.9 19.0 219.8 18.6 221.6 18.6C223.5 18.5 225.4 19.1 227.3 18.9C229.2 18.8 231.1 18.1 233.0 17.6C234.9 17.1 236.8 16.5 238.7 16.2C240.6 15.8 242.5 15.7 244.4 15.6C246.3 15.6 248.2 16.1 250.1 15.9C252.0 15.8 253.9 15.2 255.8 14.7C257.7 14.3 259.6 13.7 261.5 13.3C263.3 13.0 265.2 12.7 267.1 12.7C269.0 12.6 270.9 13.1 272.8 13.0C274.7 12.8 276.6 12.2 278.5 11.8C280.4 11.4 282.3 10.9 284.2 10.6C286.1 10.3 288.0 10.1 289.9 10.0C291.8 10.0 293.7 10.4 295.6 10.4C297.5 10.3 299.4 9.9 301.3 9.7C303.2 9.5 305.0 9.3 306.9 9.2C308.8 9.1 310.7 8.9 312.6 8.9C314.5 8.9 316.4 9.0 318.3 9.0C320.2 9.0 323.1 8.9 324.0 8.9" fill="none" stroke="#8a8df9" stroke-width="1.6" stroke-linecap="round"/>
+                  <circle cx="324" cy="8.9" r="2.6" fill="#8a8df9"/>
+                </svg>
+                <div class="ytick" style="top:6px">150</div>
+                <div class="ytick" style="top:27px">100</div>
+                <div class="ytick" style="top:48px">50</div>
+                <div class="cursor" style="left:261px"></div>
+                <div class="dot" style="left:261px;top:13.3px"></div>
+                <div class="tip" style="left:118px;top:5px">11月 1–7 日 · 132.6 GB</div>
+              </div>
+              <div class="axis"><span>2025 年 11 月</span><span>2026 年 5 月</span><span>现在</span></div>
+              <div class="pills"><span>1天</span><span>7天</span><span>1月</span><span>3月</span><span>6月</span><span class="on">1年</span><span>全部</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="note">合并点取桶内最后一次采样，悬停浮层直接显示该桶覆盖的日期范围，避免误读为某一天的数据。</p>
+  </section>
+
+</div>
+</body>
+</html>

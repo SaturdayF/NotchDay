@@ -7,6 +7,7 @@ struct NotchView: View {
     let model: NotchModel
     let calendar: CalendarFeed
     let activity: ActivityFeed
+    let storage: StorageFeed
     let sizing: NotchSizing
     let toggleExpanded: () -> Void
     let seekingChanged: (Bool) -> Void
@@ -33,7 +34,10 @@ struct NotchView: View {
     var body: some View {
         let shoulder = model.desktopWingsVisible ? sizing.shoulder(for: model.mode) : 0
         let width = sizing.bodyWidth(for: model.mode, playing: model.showsCompactPlayback)
-        let height = sizing.depth(for: model.mode, page: model.page, scheduleRows: calendar.maximumRowCount)
+        let height = sizing.depth(
+            for: model.mode, page: model.page, scheduleRows: calendar.maximumRowCount,
+            pages: model.visiblePages.count
+        )
         let outline = NotchOutline(
             shoulder: shoulder,
             corner: expanded ? 24 : sizing.compactCorner
@@ -108,6 +112,16 @@ struct NotchView: View {
             }
             .foregroundStyle(.white)
             .preferredColorScheme(.dark)
+            .onChange(of: model.page) { syncStorageActivity() }
+            .onChange(of: model.mode) { syncStorageActivity() }
+    }
+
+    private func syncStorageActivity() {
+        if expanded && model.page == .storage {
+            storage.activate()
+        } else {
+            storage.deactivate()
+        }
     }
 
     private var wingShapeAnimation: Animation? {
@@ -127,17 +141,18 @@ struct NotchView: View {
 
     private var expandedContents: some View {
         let rows = calendar.maximumRowCount
+        // 视口严格等于当前卡片高度，否则下一张卡片会从底部露出来。
         let height = sizing.cardHeight(for: model.page, scheduleRows: rows)
         let totalWidth = sizing.expandedWidth - 2 * NotchSizing.contentInset
         let width = totalWidth - NotchSizing.pageRailWidth - NotchSizing.pageRailGap
 
         return HStack(alignment: .top, spacing: NotchSizing.pageRailGap) {
             pageRail
-                .padding(.top, 4)
+                .padding(.top, NotchSizing.pageRailTopInset)
                 .frame(width: NotchSizing.pageRailWidth)
 
             VStack(spacing: NotchSizing.cardGap) {
-                ForEach(NotchPage.allCases) { page in
+                ForEach(model.visiblePages) { page in
                     card(page)
                         .frame(width: width, height: sizing.cardHeight(for: page, scheduleRows: rows), alignment: .topLeading)
                         .opacity(model.page == page ? 1 : 0.48)
@@ -147,7 +162,7 @@ struct NotchView: View {
                         .accessibilityHidden(model.page != page)
                 }
             }
-            .offset(y: -sizing.cardOffset(for: model.page, scheduleRows: rows))
+            .offset(y: -sizing.cardOffset(for: model.page, scheduleRows: rows, order: model.visiblePages))
             .frame(width: width, height: height, alignment: .topLeading)
             .clipped()
             .contentShape(Rectangle())
@@ -157,14 +172,14 @@ struct NotchView: View {
 
     private var pageRail: some View {
         VStack(spacing: 0) {
-            ForEach(NotchPage.allCases) { page in
+            ForEach(model.visiblePages) { page in
                 Button {
                     selectPage(page)
                 } label: {
                     Circle()
                         .fill(model.page == page ? Color.white : Color.white.opacity(0.32))
                         .frame(width: 5, height: 5)
-                        .frame(width: NotchSizing.pageRailWidth, height: 18)
+                        .frame(width: NotchSizing.pageRailWidth, height: NotchSizing.pageDotHeight)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -191,6 +206,8 @@ struct NotchView: View {
                 viewportHeight: sizing.scheduleViewport(rows: calendar.maximumRowCount),
                 edgesChanged: { model.agendaScrollEdges = $0 }
             )
+        case .storage:
+            StoragePage(feed: storage, tint: model.musicTint)
         }
     }
 }

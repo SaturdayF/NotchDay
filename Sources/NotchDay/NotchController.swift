@@ -7,6 +7,7 @@ final class NotchController: NSObject {
     private let model = NotchModel()
     private let calendar = CalendarFeed()
     private let activity = ActivityFeed()
+    private let storage = StorageFeed()
     private let lockBadge = LockBadge()
     private var panel: NotchPanel?
     private var settingsWindow: NSWindow?
@@ -66,6 +67,7 @@ final class NotchController: NSObject {
     func stop() {
         calendar.stop()
         model.music.stop()
+        storage.deactivate()
         pendingHover?.cancel()
         pendingRestore?.cancel()
         pendingLockHandoff?.cancel()
@@ -113,6 +115,7 @@ final class NotchController: NSObject {
                 model: model,
                 calendar: calendar,
                 activity: activity,
+                storage: storage,
                 sizing: display.sizing,
                 toggleExpanded: { [weak self] in self?.toggleExpanded() },
                 seekingChanged: { [weak self] active in self?.setSeeking(active) },
@@ -166,7 +169,10 @@ final class NotchController: NSObject {
         guard let display else { return nil }
         let sizing = display.sizing
         let location = display.anchor
-        let height = sizing.depth(for: model.mode, page: model.page, scheduleRows: calendar.maximumRowCount)
+        let height = sizing.depth(
+            for: model.mode, page: model.page, scheduleRows: calendar.maximumRowCount,
+            pages: model.visiblePages.count
+        )
         let lockHasMusicWidth = model.mode == .locked && model.lockPlaybackPreview != nil
         let width = lockHasMusicWidth ? sizing.bodyWidth(for: .compact, playing: true)
             : sizing.bodyWidth(for: model.mode, playing: model.showsCompactPlayback)
@@ -394,7 +400,10 @@ final class NotchController: NSObject {
         case let .changeTrack(step):
             model.changeTrack(by: step)
         case let .selectPage(step):
-            if let next = NotchPage(rawValue: model.page.rawValue + step) { selectPage(next) }
+            let pages = model.visiblePages
+            if let index = pages.firstIndex(of: model.page), pages.indices.contains(index + step) {
+                selectPage(pages[index + step])
+            }
         }
         return true
     }
