@@ -57,7 +57,7 @@ struct StoragePage: View {
     @ViewBuilder
     private var deltaLabel: some View {
         if let delta = delta {
-            Text(feed.range.deltaTitle)
+            Text(deltaTitle)
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.45))
                 .lineLimit(1)
@@ -69,20 +69,37 @@ struct StoragePage: View {
         }
     }
 
+    /// 刚开始记录时序列可能只覆盖一两个小时，写「较 1 天前」不准确。
+    private var deltaTitle: String {
+        guard feed.range == .day, let first = feed.series.first else { return feed.range.deltaTitle }
+        let hours = Date().timeIntervalSince(first.date) / 3600
+        guard hours < 23 else { return feed.range.deltaTitle }
+        if hours < 1 { return "较上次" }
+        return "较 \(max(1, Int(hours.rounded()))) 小时前"
+    }
+
     private var delta: Double? {
         guard let first = feed.series.first, let last = feed.series.last, feed.series.count >= 2 else { return nil }
         return Double(last.used - first.used) / 1_000_000_000
     }
 
+    /// 图表横轴窗口。区间跨度大于已有记录时把窗口收到记录起点，
+    /// 否则刚开始记录的几个点会全挤在最右侧的一条缝里，看着像没有曲线。
     private var window: (start: Date, end: Date) {
         let end = Date()
         let span = feed.range.span ?? max(86_400, feed.series.last?.date.timeIntervalSince(feed.series.first?.date ?? end) ?? 0)
-        return (end.addingTimeInterval(-span), end)
+        let start = end.addingTimeInterval(-span)
+        guard let first = feed.series.first else { return (start, end) }
+        let recorded = end.timeIntervalSince(first.date)
+        guard recorded < span else { return (start, end) }
+        // 两端留一点余量，避免首点正好压在左边缘上。
+        let padding = min(max(recorded * 0.04, 60), span * 0.1)
+        return (first.date.addingTimeInterval(-padding), end)
     }
 
     private var chartSection: some View {
         Group {
-            if feed.hasTrend {
+            if !feed.series.isEmpty {
                 let window = window
                 StorageChart(
                     points: feed.series,
@@ -184,11 +201,19 @@ private struct StorageChart: View {
 
             ZStack(alignment: .topLeading) {
                 grid(plot: plot)
-                area(coords, plot: plot)
-                line(coords)
+                if coords.count >= 2 {
+                    area(coords, plot: plot)
+                    line(coords)
+                }
+                // 只有一条记录时没有曲线，直接把这个点标出来。
+                if coords.count == 1, hoverIndex == nil {
+                    dot(clamped(coords[0], in: plot))
+                }
                 if let index = hoverIndex, coords.indices.contains(index) {
-                    cursor(coords[index], height: plot.height)
-                    dot(coords[index])
+                    if coords.count >= 2 {
+                        cursor(coords[index], height: plot.height)
+                    }
+                    dot(clamped(coords[index], in: plot))
                     tooltip(coords[index], storage: points[index], width: geometry.size.width)
                 }
                 ticks(bounds: bounds, plot: plot)
@@ -305,6 +330,11 @@ private struct StorageChart: View {
             .offset(x: point.x - 3.5, y: point.y - 3.5)
     }
 
+    /// 单点常常落在绘图区右边缘，向内收 4pt 以免圆点被裁掉一半。
+    private func clamped(_ point: CGPoint, in plot: CGRect) -> CGPoint {
+        CGPoint(x: min(max(point.x, plot.minX + 4), plot.maxX - 4), y: point.y)
+    }
+
     private func tooltip(_ position: CGPoint, storage: StoragePoint, width: CGFloat) -> some View {
         Text(label(for: storage) + " · " + String(format: "%.1f GB", Double(storage.used) / 1_000_000_000))
             .font(.system(size: 10).monospacedDigit())
@@ -327,12 +357,15 @@ private struct StorageChart: View {
     }
 
     private func ticks(bounds: (lo: Double, mid: Double, hi: Double), plot: CGRect) -> some View {
-        ForEach(0...2, id: \.self) { index in
+        let step = (bounds.hi - bounds.lo) / 2
+        return ForEach(0...2, id: \.self) { index in
             let value = index == 0 ? bounds.hi : index == 1 ? bounds.mid : bounds.lo
             let y = plot.minY + plot.height * CGFloat(index) / 2
-            Text(Self.tickText(value))
+            Text(Self.tickText(value, step: step))
                 .font(.system(size: 10).monospacedDigit())
                 .foregroundStyle(.white.opacity(0.45))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
                 .frame(width: Self.gutter - 8, alignment: .trailing)
                 .offset(x: 0, y: y - 6)
         }
@@ -352,8 +385,10 @@ private struct StorageChart: View {
         return best
     }
 
-    static func tickText(_ value: Double) -> String {
-        value >= 10 ? String(format: "%.0f", value) : String(format: "%.1f", value)
+    /// 刻度小数位随刻度间距变化，否则窄区间里三行会显示成同一个数字。
+    static func tickText(_ value: Double, step: Double) -> String {
+        let decimals = step >= 1 ? 0 : (step >= 0.1 ? 1 : 2)
+        return String(format: "%.\(decimals)f", value)
     }
 
     /// 三条刻度：取当前区间的最小/最大值向外取整，不从 0 起，避免曲线被压平。

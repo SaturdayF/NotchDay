@@ -66,6 +66,9 @@ final class NotchController: NSObject {
             self, selector: #selector(displayWoke), name: NSWorkspace.screensDidWakeNotification, object: nil
         )
         NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(displaySlept), name: NSWorkspace.screensDidSleepNotification, object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(activeSpaceChanged), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil
         )
     }
@@ -190,8 +193,15 @@ final class NotchController: NSObject {
 
     private func updatePointer() {
         guard !systemLocked, !restoring, !depthActive, model.desktopWingsVisible,
-              let panel, let bounds = hitRegion() else { return }
-        let containsPointer = bounds.contains(NSEvent.mouseLocation)
+              let panel else { return }
+        let pointer = NSEvent.mouseLocation
+        if !model.isHovering, !model.isSeeking, panel.ignoresMouseEvents,
+           !panel.frame.contains(pointer) {
+            suppressHover = false
+            return
+        }
+        guard let bounds = hitRegion() else { return }
+        let containsPointer = bounds.contains(pointer)
         let acceptsPointer = containsPointer || model.isSeeking
         let ignoresPointer = !acceptsPointer
         if panel.ignoresMouseEvents != ignoresPointer {
@@ -242,7 +252,7 @@ final class NotchController: NSObject {
         lockedWatch?.cancel()
         lockedWatch = Task { [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                do { try await Task.sleep(for: .seconds(1), tolerance: .milliseconds(100)) } catch { return }
                 guard let self, self.systemLocked else { return }
                 if Self.systemLockStatus == false {
                     self.screenUnlocked()
@@ -325,6 +335,10 @@ final class NotchController: NSObject {
         } else if !systemLocked && !restoring {
             refreshDisplay()
         }
+    }
+
+    @objc private func displaySlept() {
+        lockBadge.pauseHover()
     }
 
     private func updateHoverAction() {

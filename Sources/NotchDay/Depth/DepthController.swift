@@ -51,7 +51,11 @@ final class DepthController: ObservableObject {
     private var consecutiveFailedReads = 0
     private var startedAt: CFTimeInterval = 0
     private var preview: PreviewRun?
+    private var lidAngleBeforeSleep: Double?
+    private var openingWake: LidWakeOpening?
+    private var openingStartedAt: CFTimeInterval?
     private var isSuspended = false
+    private var isDisplaySleeping = false
     private var isSessionLocked = false
     private var isCapturePending = false
     private var motionIntent = LidMotionIntent()
@@ -75,9 +79,13 @@ final class DepthController: ObservableObject {
     /// once the lid has risen `LidEffectPolicy.minimumReleaseRise` above it.
     private var lowestRunAngle: Double = 0
     private static let idlePollInterval: TimeInterval = 1.0 / 8
+    private static let relaxedPollInterval: TimeInterval = 1.0 / 6
     private static let activePollInterval: TimeInterval = 1.0 / 30
     private static let fadeInDuration: TimeInterval = 0.07
     private static let captureRetryInterval: TimeInterval = 0.5
+    private static let openingWakeWindow: TimeInterval = 1.25
+    private static let openingFrameDeadline: TimeInterval = 0.4
+    private static let openingRunLimit: TimeInterval = 2.5
 
     /// Closing speed that counts as a deliberate close, in degrees per second.
     /// A still lid reads under 0.5.
@@ -124,6 +132,7 @@ final class DepthController: ObservableObject {
         let startedAt: CFTimeInterval
         let open: Double
         let shut: Double
+        var openingOnly = false
         let closing: CFTimeInterval = 1.4
         let hold: CFTimeInterval = 0.8
         let opening: CFTimeInterval = 0.6
@@ -131,6 +140,11 @@ final class DepthController: ObservableObject {
         /// `nil` once the run is over.
         func angle(at now: CFTimeInterval) -> Double? {
             let elapsed = now - startedAt
+            if openingOnly {
+                let duration = 0.95
+                guard elapsed < duration else { return nil }
+                return shut + (open - shut) * elapsed / duration
+            }
             if elapsed < closing { return open + (shut - open) * (elapsed / closing) }
             if elapsed < closing + hold { return shut }
             if elapsed < closing + hold + opening {
@@ -166,6 +180,7 @@ final class DepthController: ObservableObject {
             .sink { [weak self] enabled, _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    if !enabled { self.openingWake = nil }
                     self.disableEffect()
                     self.updatePolling(enabled: enabled)
                 }
@@ -177,13 +192,17 @@ final class DepthController: ObservableObject {
         preferencesObservation?.cancel()
         preferencesObservation = nil
         setPollInterval(0)
+        openingWake = nil
         stopEffectAndCapture()
     }
 
     func refreshScreenPermission() {
         let allowed = CGPreflightScreenCaptureAccess()
         if hasScreenPermission != allowed { hasScreenPermission = allowed }
-        if !allowed, pollTimer != nil { disableEffect() }
+        if !allowed {
+            openingWake = nil
+            if pollTimer != nil { disableEffect() }
+        }
         updatePolling(enabled: preferences.isEnabled)
     }
 
@@ -195,15 +214,18 @@ final class DepthController: ObservableObject {
 
     private func updatePolling(enabled: Bool) {
         let canPoll = enabled && hasScreenPermission && isSensorAvailable
-            && !isSuspended && !isSessionLocked && builtInLayout.displayID != nil
+            && !isSuspended && !isDisplaySleeping && !isSessionLocked && builtInLayout.displayID != nil
         if !canPoll { setPollInterval(0) }
-        else if pollTimer == nil { setPollInterval(Self.idlePollInterval) }
+        else if pollTimer == nil {
+            setPollInterval(openingWake == nil ? Self.idlePollInterval : Self.activePollInterval)
+        }
     }
 
     private func stopEffectAndCapture() {
         pictureTask?.cancel()
         pictureTask = nil
         isCapturePending = false
+        openingStartedAt = nil
         isClosingOut = false
         stopDisplayLink()
         overlay.dismiss(animated: false)
@@ -229,19 +251,24 @@ final class DepthController: ObservableObject {
     }
 
     /// Plays the effect once on the current screen contents.
-    func runPreview() {
+    func runPreview(opening: Bool = false) {
         refreshScreenPermission()
         guard pollTimer != nil, preview == nil, !isActive, !isClosingOut else { return }
+        guard !opening || preferences.isOpeningEnabled else { return }
         // Well above the trigger angle, so the sweep runs the pre-warm the way
         // a real close does.
-        preview = PreviewRun(
-            startedAt: CACurrentMediaTime(),
+        let now = CACurrentMediaTime()
+        let run = PreviewRun(
+            startedAt: now,
             open: max(
                 preferences.thresholdAngle + preferences.hysteresis + 5,
                 min(preferences.thresholdAngle + 35, 130)
             ),
-            shut: max(preferences.thresholdAngle - preferences.blurSpan * 1.15, 5)
+            shut: max(preferences.thresholdAngle - preferences.blurSpan * 1.15, opening ? 0 : 5),
+            openingOnly: opening
         )
+        preview = run
+        openingWake = opening ? LidWakeOpening(deadline: now + Self.openingWakeWindow, lowestAngle: run.shut) : nil
         setPollInterval(Self.activePollInterval)
     }
 
@@ -262,10 +289,24 @@ final class DepthController: ObservableObject {
     }
 
     private func poll() {
+        let now = CACurrentMediaTime()
+        if let wake = openingWake, now >= wake.deadline || !preferences.isOpeningEnabled {
+            openingWake = nil
+        }
+        if let started = openingStartedAt {
+            if !preferences.isOpeningEnabled
+                || (!overlay.hasPresentedPicture
+                    && (now - started >= Self.openingFrameDeadline || (!isCapturePending && !overlay.isVisible))) {
+                disableEffect()
+            } else if now - started >= Self.openingRunLimit {
+                setActive(false)
+            }
+        }
         let angle: Double
         if let run = preview {
             guard let scripted = run.angle(at: CACurrentMediaTime()) else {
                 preview = nil
+                openingWake = nil
                 if isActive { setActive(false) }
                 peakAngle = 0
                 lastChangedAngle = nil
@@ -307,10 +348,21 @@ final class DepthController: ObservableObject {
         openDwell.update(angle: angle, at: CACurrentMediaTime(), dwellAngle: effectPolicy.dwellAngle)
         reconcile(angle: angle)
 
+        if let displayLink, overlay.hasPresentedPicture {
+            let moving = isClosingOut || abs(angle - visualAngle.value) > 0.01 || abs(visualAngle.velocity) > 0.1
+            let maximum: Float = moving ? 60 : 30
+            if displayLink.preferredFrameRateRange.maximum != maximum {
+                displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: maximum, preferred: maximum)
+            }
+        }
         let prewarmZone = preferences.thresholdAngle + preferences.prewarmCeiling
-        let wantsFastPolling = preview != nil || isActive || isClosingOut
+        let wantsFastPolling = preview != nil || isActive || isClosingOut || openingWake != nil
             || (angle <= prewarmZone && angularVelocity <= -Self.triggerClosingSpeed)
-        setPollInterval(wantsFastPolling ? Self.activePollInterval : Self.idlePollInterval)
+        let stillAboveTrigger = angle > preferences.thresholdAngle + 12
+            && now - lastChangeTime > 0.5 && abs(angularVelocity) < 0.5
+        if wantsFastPolling { setPollInterval(Self.activePollInterval) }
+        else if stillAboveTrigger { setPollInterval(Self.relaxedPollInterval) }
+        else { setPollInterval(Self.idlePollInterval) }
     }
 
     private var effectPolicy: LidEffectPolicy {
@@ -381,6 +433,33 @@ final class DepthController: ObservableObject {
     /// whose screenshot failed is retried here.
     private func reconcile(angle: Double) {
         guard preferences.isEnabled, !isSuspended else { return }
+        if openingStartedAt != nil {
+            let reversing = angularVelocity <= -Self.triggerClosingSpeed
+                && peakAngle - angle >= LidEffectPolicy.minimumReleaseRise
+            if reversing, !overlay.hasPresentedPicture {
+                stopEffectAndCapture()
+            } else if reversing || (overlay.hasPresentedPicture && angle >= preferences.thresholdAngle) {
+                setActive(false)
+            }
+            return
+        }
+        if !isActive, !isClosingOut, var wake = openingWake {
+            let now = CACurrentMediaTime()
+            let displayReady = builtInLayout.displayID.map { CGDisplayIsAsleep($0) == 0 } ?? false
+            switch wake.observe(angle: angle, now: now, threshold: preferences.thresholdAngle, displayReady: displayReady) {
+            case .wait:
+                openingWake = wake
+            case .expire:
+                openingWake = nil
+            case .start:
+                DepthLog.lid.notice("opening start at \(angle, format: .fixed(precision: 2))°")
+                openingStartedAt = now
+                nextCaptureAttempt = 0
+                streamer.stop()
+                setActive(true)
+                return
+            }
+        }
         let wanted = wantsEffect(angle: angle)
         if wanted != isActive {
             DepthLog.lid.notice(
@@ -483,6 +562,7 @@ final class DepthController: ObservableObject {
     private func setActive(_ active: Bool) {
         isActive = active
         if active {
+            openingWake = nil
             peakAngle = rawAngle
             lowestRunAngle = rawAngle
             openDwell.reset()
@@ -497,6 +577,7 @@ final class DepthController: ObservableObject {
             setPollInterval(Self.activePollInterval)
             presentPicture()
         } else {
+            openingStartedAt = nil
             cancelSnapshot()
             timeoutReferenceAngle = nil
             beginClosingOut()
@@ -538,7 +619,8 @@ final class DepthController: ObservableObject {
         guard isActive, now >= nextCaptureAttempt else { return }
         nextCaptureAttempt = now + Self.captureRetryInterval
         guard overlay.warmUp() else { return }
-        if preferences.isLivePicture, let screen = NSScreen.builtIn,
+        let isOpening = openingStartedAt != nil
+        if !isOpening, preferences.isLivePicture, let screen = NSScreen.builtIn,
            overlay.showLive(
                on: screen,
                island: captureIsland?(screen),
@@ -565,7 +647,7 @@ final class DepthController: ObservableObject {
             return
         }
 
-        if let image = snapshotter.latestImage, let screen = snapshotter.latestScreen {
+        if !isOpening, let image = snapshotter.latestImage, let screen = snapshotter.latestScreen {
             snapshotter.stop()
             show(image: image, on: screen)
             return
@@ -574,7 +656,8 @@ final class DepthController: ObservableObject {
         pictureTask?.cancel()
         pictureTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
-            await self.snapshotter.captureOnce()
+            if isOpening { await self.snapshotter.captureAfterWake() }
+            else { await self.snapshotter.captureOnce() }
             guard !Task.isCancelled else { return }
             self.pictureTask = nil
             self.isCapturePending = false
@@ -663,7 +746,16 @@ final class DepthController: ObservableObject {
             overlay.absorb(frame)
             if isCapturePending { cancelSnapshot() }
         }
-        let target = isClosingOut ? preferences.thresholdAngle : rawAngle
+        let threshold = preferences.thresholdAngle
+        if let started = openingStartedAt, !overlay.hasPresentedPicture {
+            guard now - started < Self.openingFrameDeadline, overlay.isPictureReady else { return }
+            // A quick open can pass the flat angle while the frame uploads.
+            // Start its short finish near flat instead of showing an old angle.
+            visualAngle.reset(to: min(rawAngle, max(0, threshold - 5)))
+            applyVisual(angle: visualAngle.value)
+            return
+        }
+        let target = isClosingOut ? threshold : rawAngle
         visualAngle.advance(to: target, dt: dt)
 
         guard isClosingOut else {
@@ -701,6 +793,12 @@ final class DepthController: ObservableObject {
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.resume() }
         }
+        workspace.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setDisplaySleeping(true) }
+        }
+        workspace.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setDisplaySleeping(false) }
+        }
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -722,14 +820,23 @@ final class DepthController: ObservableObject {
         }
     }
 
+    private func setDisplaySleeping(_ sleeping: Bool) {
+        isDisplaySleeping = sleeping
+        if sleeping { disableEffect() }
+        updatePolling(enabled: preferences.isEnabled)
+    }
+
     private func suspend() {
         DepthLog.lid.notice("suspend")
+        lidAngleBeforeSleep = preferences.isEnabled && preferences.isOpeningEnabled ? sensor.angle() : nil
+        openingWake = nil
         isSuspended = true
         setPollInterval(0)
         stopEffectAndCapture()
     }
 
     private func resume() {
+        guard isSuspended else { return }
         DepthLog.lid.notice("resume")
         isSuspended = false
         // A fresh baseline, so waking with a nearly shut lid does not read as
@@ -744,10 +851,24 @@ final class DepthController: ObservableObject {
         timeoutAwaitingRelease = false
         wasTimeoutEnabled = false
         isClosingOut = false
-        if let angle = sensor.angle() {
+        let wakeAngle = sensor.angle()
+        if let displayID = builtInLayout.displayID, CGDisplayIsAsleep(displayID) == 0 {
+            isDisplaySleeping = false
+        }
+        if let angle = wakeAngle {
             rawAngle = angle
             visualAngle.reset(to: angle)
         }
+        if preferences.isEnabled, preferences.isOpeningEnabled {
+            // A low reading before sleep can establish movement even when
+            // the first reading after a fast open is already near flat.
+            let closedAngle = lidAngleBeforeSleep.flatMap { $0 <= 35 ? $0 : nil }
+            openingWake = LidWakeOpening(
+                deadline: CACurrentMediaTime() + Self.openingWakeWindow,
+                lowestAngle: closedAngle ?? wakeAngle
+            )
+        }
+        lidAngleBeforeSleep = nil
         refreshScreenPermission()
     }
 }

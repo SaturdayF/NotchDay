@@ -13,6 +13,7 @@ final class DepthPreferences: ObservableObject {
 
     private enum Key {
         static let isEnabled = "depth.isEnabled"
+        static let isOpeningEnabled = "depth.isOpeningEnabled"
         static let isTimeoutEnabled = "depth.isTimeoutEnabled"
         static let thresholdAngle = "depth.thresholdAngle"
         static let blurSpan = "depth.blurSpan"
@@ -25,13 +26,14 @@ final class DepthPreferences: ObservableObject {
         static let isLivePicture = "depth.isLivePicture"
 
         static let all = [
-            isEnabled, isTimeoutEnabled, thresholdAngle, blurSpan, maxBlurRadius,
+            isEnabled, isOpeningEnabled, isTimeoutEnabled, thresholdAngle, blurSpan, maxBlurRadius,
             maxDim, viewingDistance, recession, blurEvenness, dimReach, isLivePicture,
         ]
     }
 
     private static let factory: [String: Any] = [
         Key.isEnabled: true,
+        Key.isOpeningEnabled: true,
         Key.isTimeoutEnabled: false,
         Key.thresholdAngle: 90.0,
         Key.blurSpan: 60.0,
@@ -47,6 +49,10 @@ final class DepthPreferences: ObservableObject {
     /// Master switch for the depth effect.
     @Published var isEnabled: Bool {
         didSet { defaults.set(isEnabled, forKey: Key.isEnabled) }
+    }
+
+    @Published var isOpeningEnabled: Bool {
+        didSet { defaults.set(isOpeningEnabled, forKey: Key.isOpeningEnabled) }
     }
 
     /// Ends the effect early if the angle holds still while below the
@@ -134,6 +140,7 @@ final class DepthPreferences: ObservableObject {
         let defaults = UserDefaults.standard
         defaults.register(defaults: Self.factory)
         isEnabled = defaults.bool(forKey: Key.isEnabled)
+        isOpeningEnabled = defaults.bool(forKey: Key.isOpeningEnabled)
         isTimeoutEnabled = defaults.bool(forKey: Key.isTimeoutEnabled)
         thresholdAngle = defaults.double(forKey: Key.thresholdAngle)
         blurSpan = defaults.double(forKey: Key.blurSpan)
@@ -151,6 +158,7 @@ final class DepthPreferences: ObservableObject {
             defaults.removeObject(forKey: key)
         }
         isEnabled = defaults.bool(forKey: Key.isEnabled)
+        isOpeningEnabled = defaults.bool(forKey: Key.isOpeningEnabled)
         isTimeoutEnabled = defaults.bool(forKey: Key.isTimeoutEnabled)
         thresholdAngle = defaults.double(forKey: Key.thresholdAngle)
         blurSpan = defaults.double(forKey: Key.blurSpan)

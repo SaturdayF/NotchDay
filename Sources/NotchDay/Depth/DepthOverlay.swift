@@ -125,6 +125,7 @@ final class DepthOverlay {
 
     var isVisible: Bool { window != nil }
     var isPictureReady: Bool { renderer?.isReady ?? false }
+    var hasPresentedPicture: Bool { window != nil && hasRevealed }
     var hostWindow: NSWindow? { window }
 
     @discardableResult

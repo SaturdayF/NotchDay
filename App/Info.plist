@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.5.0</string>
+	<string>0.5.2</string>
 	<key>CFBundleVersion</key>
-	<string>9</string>
+	<string>11</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>LSUIElement</key>
@@ -31,7 +31,7 @@
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>NotchDay 读取今天和明天到期的未完成提醒事项，并在灵动岛的日程卡片中显示。</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>NotchDay 读取内置显示器的画面，在合盖时实时绘制景深效果。画面仅在本机内存中处理。</string>
+	<string>NotchDay 读取内置显示器的画面，在开合盖时绘制景深效果。画面仅在本机内存中处理。</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSPrincipalClass</key>

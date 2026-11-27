@@ -153,7 +153,12 @@ struct NotchView: View {
 
             VStack(spacing: NotchSizing.cardGap) {
                 ForEach(model.visiblePages) { page in
-                    card(page)
+                    Group {
+                        // Keep the agenda's scroll position across collapses.
+                        if expanded || page == .schedule {
+                            card(page)
+                        }
+                    }
                         .frame(width: width, height: sizing.cardHeight(for: page, scheduleRows: rows), alignment: .topLeading)
                         .opacity(model.page == page ? 1 : 0.48)
                         .animation(.easeInOut(duration: reduceMotion ? 0.12 : 0.22), value: model.page == page)

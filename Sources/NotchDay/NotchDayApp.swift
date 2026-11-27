@@ -56,10 +56,11 @@ private final class NotchAppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--settings") {
             settings.show(.depth)
         }
-        if CommandLine.arguments.contains("--depth-preview") {
+        let openingPreview = CommandLine.arguments.contains("--depth-opening-preview")
+        if openingPreview || CommandLine.arguments.contains("--depth-preview") {
             Task {
                 try? await Task.sleep(for: .milliseconds(1200))
-                depth.runPreview()
+                depth.runPreview(opening: openingPreview)
             }
         }
     }

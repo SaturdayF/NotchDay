@@ -52,6 +52,15 @@ final class ScreenSnapshotter {
         await startCapture().value
     }
 
+    /// Wait for any cancelled request to drain before taking a fresh frame.
+    func captureAfterWake() async {
+        stop()
+        await inFlight?.value
+        guard !Task.isCancelled else { return }
+        invalidateFilter()
+        await captureOnce()
+    }
+
     /// Drops the cached filter, so the next capture enumerates the windows
     /// again.
     func invalidateFilter() {

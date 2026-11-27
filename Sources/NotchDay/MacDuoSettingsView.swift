@@ -11,6 +11,7 @@ struct MacDuoSettingsView: View {
     @ObservedObject var controller: DepthController
 
     private var hasScreenPermission: Bool { controller.hasScreenPermission }
+    private var canPreview: Bool { controller.isSensorAvailable && hasScreenPermission && preferences.isEnabled }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -108,12 +109,18 @@ struct MacDuoSettingsView: View {
             toggleRow(
                 "景深效果",
                 isOn: $preferences.isEnabled,
-                help: "合盖时把屏幕内容按透视推远、模糊并压暗。"
+                help: "让屏幕和灵动岛随铰链角度一起倾斜、模糊和压暗。"
             )
+            toggleRow(
+                "开盖景深",
+                isOn: $preferences.isOpeningEnabled,
+                help: "唤醒后用一帧画面随开盖恢复清晰。"
+            )
+            .disabled(!preferences.isEnabled)
             toggleRow(
                 "实时渲染",
                 isOn: $preferences.isLivePicture,
-                help: "关闭后固定使用触发瞬间的那一帧画面。"
+                help: "合盖期间持续更新画面。关闭后使用单帧画面。"
             )
             .disabled(!preferences.isEnabled)
         }
@@ -174,10 +181,14 @@ struct MacDuoSettingsView: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Button("预览效果") {
+                Button("预览合盖") {
                     controller.runPreview()
                 }
-                .disabled(!controller.isSensorAvailable || !hasScreenPermission || !preferences.isEnabled)
+                .disabled(!canPreview)
+                Button("预览开盖") {
+                    controller.runPreview(opening: true)
+                }
+                .disabled(!canPreview || !preferences.isOpeningEnabled)
                 Spacer()
                 Button("恢复默认") { preferences.resetToDefaults() }
                 Button("退出 NotchDay", role: .destructive) {

@@ -29,7 +29,11 @@ private struct MusicSnapshot: Sendable {
 final class MusicPlayback: NSObject {
     enum Connection { case closed, needsPermission, denied, connected, unavailable }
 
-    private(set) var connection: Connection = .closed
+    private(set) var connection: Connection = .closed {
+        didSet {
+            if oldValue != connection { updatePolling() }
+        }
+    }
     private(set) var track = MusicTrack.empty
     private(set) var artwork: NSImage?
     private(set) var isPlaying = false
@@ -69,14 +73,19 @@ final class MusicPlayback: NSObject {
     func setVisible(_ visible: Bool) {
         guard visible != monitoring else { return }
         monitoring = visible
+        updatePolling()
+        if visible { refresh() }
+    }
+
+    private func updatePolling() {
         pollTask?.cancel()
-        guard visible else { return }
-        refresh()
+        pollTask = nil
+        guard monitoring, connection == .connected else { return }
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(4)) } catch { return }
+                do { try await Task.sleep(for: .seconds(4), tolerance: .milliseconds(300)) } catch { return }
                 guard let self else { return }
-                if self.connection == .connected { self.refresh() }
+                self.refresh()
             }
         }
     }
@@ -210,11 +219,12 @@ final class MusicPlayback: NSObject {
     }
 
     private static func thumbnail(_ data: Data) -> NSImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                   kCGImageSourceCreateThumbnailFromImageAlways: true,
                   kCGImageSourceCreateThumbnailWithTransform: true,
-                  kCGImageSourceThumbnailMaxPixelSize: 144
+                  kCGImageSourceThumbnailMaxPixelSize: 144,
+                  kCGImageSourceShouldCacheImmediately: true
               ] as CFDictionary) else { return nil }
         return NSImage(cgImage: image, size: .zero)
     }

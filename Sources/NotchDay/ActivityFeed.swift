@@ -95,9 +95,9 @@ enum KnowledgeActivity {
             _ = deviceID.withCString { sqlite3_bind_text(statement, 3, $0, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self)) }
         }
 
-        var apps: [String: [DateInterval]] = [:]
-        var domains: [String: [DateInterval]] = [:]
-        var all: [DateInterval] = []
+        var apps: [String: UsageTotal] = [:]
+        var domains: [String: UsageTotal] = [:]
+        var combined: [Range<Double>] = []
         while true {
             let step = sqlite3_step(statement)
             if step == SQLITE_DONE { break }
@@ -105,53 +105,54 @@ enum KnowledgeActivity {
             let start = max(lower, sqlite3_column_double(statement, 2))
             let end = min(upper, sqlite3_column_double(statement, 3))
             guard start.isFinite, end.isFinite, end > start else { continue }
-            let interval = DateInterval(
-                start: Date(timeIntervalSinceReferenceDate: start), end: Date(timeIntervalSinceReferenceDate: end)
-            )
             if string(statement, 0) == "/app/usage", let id = string(statement, 1), !id.isEmpty {
-                apps[id, default: []].append(interval)
-                all.append(interval)
+                apps[id, default: UsageTotal()].add(start..<end)
             } else if let domain = string(statement, 4)?.lowercased(), !domain.isEmpty {
-                domains[domain, default: []].append(interval)
-                all.append(interval)
+                domains[domain, default: UsageTotal()].add(start..<end)
+            } else {
+                continue
+            }
+            // The query returns rows in start-time order, including after clipping.
+            if let last = combined.last, start <= last.upperBound {
+                combined[combined.count - 1] = last.lowerBound..<max(last.upperBound, end)
+            } else {
+                combined.append(start..<end)
             }
         }
 
-        let combined = merged(all)
         var hours = Array(repeating: 0.0, count: 24)
         for interval in combined {
-            var cursor = interval.start
-            while cursor < interval.end, let hour = calendar.dateInterval(of: .hour, for: cursor) {
-                let end = min(hour.end, interval.end)
+            var cursor = Date(timeIntervalSinceReferenceDate: interval.lowerBound)
+            let limit = Date(timeIntervalSinceReferenceDate: interval.upperBound)
+            while cursor < limit, let hour = calendar.dateInterval(of: .hour, for: cursor) {
+                let end = min(hour.end, limit)
                 guard end > cursor else { break }
                 hours[calendar.component(.hour, from: cursor)] += end.timeIntervalSince(cursor)
                 cursor = end
             }
         }
         return ActivitySummary(
-            seconds: combined.reduce(0) { $0 + $1.duration }, hours: hours,
+            seconds: combined.reduce(0) { $0 + ($1.upperBound - $1.lowerBound) }, hours: hours,
             apps: ranked(apps), domains: ranked(domains)
         )
     }
 
-    private static func ranked(_ groups: [String: [DateInterval]]) -> [ActivitySummary.Item] {
-        groups.map { id, intervals in
-            ActivitySummary.Item(id: id, seconds: merged(intervals).reduce(0) { $0 + $1.duration })
+    private static func ranked(_ groups: [String: UsageTotal]) -> [ActivitySummary.Item] {
+        groups.map { id, total in
+            ActivitySummary.Item(id: id, seconds: total.seconds)
         }.sorted { lhs, rhs in
             lhs.seconds == rhs.seconds ? lhs.id < rhs.id : lhs.seconds > rhs.seconds
         }
     }
 
-    private static func merged(_ intervals: [DateInterval]) -> [DateInterval] {
-        var result: [DateInterval] = []
-        for current in intervals.sorted(by: { $0.start < $1.start }) {
-            if let last = result.last, current.start <= last.end {
-                result[result.count - 1] = DateInterval(start: last.start, end: max(last.end, current.end))
-            } else {
-                result.append(current)
-            }
+    private struct UsageTotal {
+        private var end = -Double.infinity
+        private(set) var seconds = 0.0
+
+        mutating func add(_ interval: Range<Double>) {
+            seconds += max(0, interval.upperBound - max(end, interval.lowerBound))
+            end = max(end, interval.upperBound)
         }
-        return result
     }
 
     private static func string(_ statement: OpaquePointer, _ index: Int32) -> String? {

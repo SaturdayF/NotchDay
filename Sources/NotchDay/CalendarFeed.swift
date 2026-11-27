@@ -80,7 +80,7 @@ final class CalendarFeed: NSObject {
     private var reminders: [AgendaReminder] = []
     private var reminderFetch: Any?
     private var reminderRequestID = UUID()
-    var maximumRowCount: Int { days.map { $0.events.count + $0.reminders.count }.max() ?? 0 }
+    var maximumRowCount: Int { days.lazy.map { $0.events.count + $0.reminders.count }.max() ?? 0 }
 
     func start() {
         let center = NotificationCenter.default
@@ -129,9 +129,14 @@ final class CalendarFeed: NSObject {
         if permission != .requesting { permission = Self.permission(for: .event) }
         if reminderPermission != .requesting { reminderPermission = Self.permission(for: .reminder) }
         if reminderPermission != .allowed { reminders = [] }
-        rebuildDays()
         cancelReminderFetch()
-        guard reminderPermission == .allowed, let dates = Self.agendaDates() else { return }
+        guard let dates = Self.agendaDates() else {
+            days = []
+            return
+        }
+        let events = permission == .allowed ? calendarEvents(from: dates.today, to: dates.end) : []
+        rebuildDays(events: events, dates: dates)
+        guard reminderPermission == .allowed else { return }
 
         let id = reminderRequestID
         let predicate = store.predicateForIncompleteReminders(
@@ -156,7 +161,7 @@ final class CalendarFeed: NSObject {
                 guard let self, self.reminderRequestID == id else { return }
                 self.reminderFetch = nil
                 self.reminders = reminders
-                self.rebuildDays()
+                self.rebuildDays(events: events, dates: dates)
             }
         }
     }
@@ -167,16 +172,16 @@ final class CalendarFeed: NSObject {
         reminderFetch = nil
     }
 
-    private func rebuildDays() {
-        guard permission == .allowed || reminderPermission == .allowed, let dates = Self.agendaDates() else {
+    private func rebuildDays(events: [AgendaEvent], dates: (today: Date, tomorrow: Date, end: Date)) {
+        guard permission == .allowed || reminderPermission == .allowed else {
             days = []
             return
         }
-        let events = permission == .allowed ? calendarEvents(from: dates.today, to: dates.end) : []
         days = [("今天", dates.today, dates.tomorrow), ("明天", dates.tomorrow, dates.end)].map { title, start, end in
-            AgendaDay(
+            let interval = DateInterval(start: start, end: end)
+            return AgendaDay(
                 title: title, date: start,
-                events: events.filter { $0.overlaps(DateInterval(start: start, end: end)) },
+                events: events.filter { $0.overlaps(interval) },
                 reminders: reminders.filter { $0.due >= start && $0.due < end }
             )
         }

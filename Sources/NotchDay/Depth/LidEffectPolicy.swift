@@ -1,5 +1,28 @@
 import Foundation
 
+/// A short window after waking in which an upward hinge movement can start
+/// the opening effect. A wake on its own doesn't imply lid movement.
+struct LidWakeOpening {
+    enum Decision: Equatable {
+        case wait, start, expire
+    }
+
+    let deadline: TimeInterval
+    var lowestAngle: Double?
+
+    mutating func observe(
+        angle: Double, now: TimeInterval, threshold: Double, displayReady: Bool
+    ) -> Decision {
+        guard now < deadline, angle <= threshold + 12 else { return .expire }
+        let lowest = min(lowestAngle ?? angle, angle)
+        lowestAngle = lowest
+        if displayReady, angle - lowest >= LidEffectPolicy.minimumReleaseRise {
+            return .start
+        }
+        return .wait
+    }
+}
+
 /// Whether the lid is on its way down or on its way up.
 ///
 /// Ported from Mac-Duo, Apache License 2.0.

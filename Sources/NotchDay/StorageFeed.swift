@@ -98,6 +98,7 @@ enum StorageLog {
         let formatter = timestampFormatter()
         var points: [StoragePoint] = []
         for file in files where file.pathExtension == "csv" {
+            if Task.isCancelled { return [] }
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             for line in text.split(separator: "\n") {
                 let fields = line.split(separator: ",")
@@ -162,8 +163,8 @@ final class StorageFeed {
     private(set) var range: StorageRange = .day
 
     private var rawPoints: [StoragePoint] = []
+    private var availability: [StorageRange: Bool] = [:]
     private var lastSampleAt: Date?
-    private var loaded = false
     private var activation: Task<Void, Never>?
     private var sampler: Task<Void, Never>?
 
@@ -173,21 +174,36 @@ final class StorageFeed {
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
             workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshSnapshot() }
+                MainActor.assumeIsolated {
+                    guard let self, self.sampler != nil else { return }
+                    self.refreshSnapshot()
+                }
             }
         }
     }
 
-    var availableSpan: TimeInterval {
-        guard let first = rawPoints.first, let last = rawPoints.last else { return 0 }
-        return last.date.timeIntervalSince(first.date)
+    func isAvailable(_ range: StorageRange) -> Bool {
+        availability[range] ?? false
     }
 
-    var hasTrend: Bool { series.count >= 2 }
-
-    func isAvailable(_ range: StorageRange) -> Bool {
-        guard let span = range.span else { return true }
-        return availableSpan >= span - 3600
+    /// 区间是否可用。1 天与全部只要有记录就能画（单点也显示），
+    /// 更长区间需要记录跨度覆盖且至少两个点，避免用几天的数据冒充一年。
+    /// 同时看点数是为了处理长时间未运行的情况：跨度够了但最近 24 小时只有一条，
+    /// 1 天区间会是一片空白，看起来像历史记录丢了。
+    private func recomputeAvailability() {
+        let now = Date()
+        let historySpan = rawPoints.first.map { now.timeIntervalSince($0.date) } ?? 0
+        let total = rawPoints.count
+        var map: [StorageRange: Bool] = [:]
+        for range in StorageRange.allCases {
+            let count = sampleCount(range, now: now)
+            if let span = range.span, range != .day {
+                map[range] = count >= 2 && historySpan >= span - 3600
+            } else {
+                map[range] = count >= 2 || (count == 1 && total == 1)
+            }
+        }
+        availability = map
     }
 
     func select(_ range: StorageRange) {
@@ -216,14 +232,22 @@ final class StorageFeed {
         activation = nil
         sampler?.cancel()
         sampler = nil
+        rawPoints = []
     }
 
     private func load() async {
-        guard !loaded else { return }
-        let points = await Task.detached(priority: .utility) { StorageLog.readAll() }.value
+        // 每次进入卡片都重读日志并按当前时间重算窗口，
+        // 否则离开一段时间后再回来，图表还停在离开那一刻的区间。
+        let read = Task.detached(priority: .utility) { StorageLog.readAll() }
+        let points = await withTaskCancellationHandler {
+            await read.value
+        } onCancel: {
+            read.cancel()
+        }
+        guard !Task.isCancelled else { return }
         rawPoints = points
         lastSampleAt = points.last?.date
-        loaded = true
+        recomputeAvailability()
         clampRange()
         rebuildSeries()
     }
@@ -253,14 +277,19 @@ final class StorageFeed {
         let now = Date()
         self.snapshot = snapshot
         lastSampleAt = now
-        rawPoints.append(StoragePoint(date: now, used: snapshot.used, bucketDays: 0))
+        let point = StoragePoint(date: now, used: snapshot.used, bucketDays: 0)
+        let index = rawPoints.last.map { $0.date > now } == true
+            ? rawPoints.firstIndex { $0.date > now } ?? rawPoints.endIndex
+            : rawPoints.endIndex
+        rawPoints.insert(point, at: index)
         StorageLog.append(date: now, used: snapshot.used, total: snapshot.total)
+        recomputeAvailability()
         clampRange()
         rebuildSeries()
     }
 
     private func refreshSnapshot() {
-        guard loaded, let snapshot = readSnapshot() else { return }
+        guard let snapshot = readSnapshot() else { return }
         self.snapshot = snapshot
     }
 
@@ -274,43 +303,49 @@ final class StorageFeed {
 
     private func clampRange() {
         guard !isAvailable(range) else { return }
-        range = StorageRange.allCases.last { isAvailable($0) } ?? .all
+        // 优先回落到最短的可用区间，保持与默认视图接近的密度；
+        // 全都不可用时保留「全部」，由卡片显示数据积累提示。
+        range = StorageRange.allCases.first { isAvailable($0) } ?? .all
     }
 
     private func rebuildSeries() {
-        series = Self.aggregate(rawPoints, range: range, now: Date())
+        series = aggregate(range, now: Date())
     }
 
-    static func aggregate(_ points: [StoragePoint], range: StorageRange, now: Date) -> [StoragePoint] {
-        guard !points.isEmpty else { return [] }
-        let sorted = points.sorted { $0.date < $1.date }
-        guard range != .day else {
-            let start = now.addingTimeInterval(-86_400)
-            return sorted.filter { $0.date >= start }.map { StoragePoint(date: $0.date, used: $0.used, bucketDays: 0) }
-        }
-
-        let span: TimeInterval
-        let bucketDays: Int
-        if let fixed = range.span {
-            span = fixed
-            bucketDays = max(1, range.bucketDays)
-        } else {
-            span = max(86_400, sorted[sorted.count - 1].date.timeIntervalSince(sorted[0].date))
-            bucketDays = max(1, Int((span / 86_400 / 50).rounded(.up)))
-        }
-
+    private func window(_ range: StorageRange, now: Date) -> (points: ArraySlice<StoragePoint>, bucketDays: Int) {
+        guard let first = rawPoints.first, let last = rawPoints.last else { return ([], 0) }
+        let span = range.span ?? max(86_400, last.date.timeIntervalSince(first.date))
+        let days = range == .all ? max(1, Int((span / 86_400 / 50).rounded(.up))) : range.bucketDays
         let start = now.addingTimeInterval(-span)
+        return (rawPoints.drop(while: { $0.date < start }), days)
+    }
+
+    private func sampleCount(_ range: StorageRange, now: Date) -> Int {
+        let (points, days) = window(range, now: now)
+        guard let first = points.first, let last = points.last else { return 0 }
+        if days == 0 { return points.count }
+        return bucket(first.date, days: days) == bucket(last.date, days: days) ? 1 : 2
+    }
+
+    private func aggregate(_ range: StorageRange, now: Date) -> [StoragePoint] {
+        let (points, days) = window(range, now: now)
+        guard days != 0 else { return Array(points) }
         var result: [StoragePoint] = []
         var currentBucket: Int?
-        for point in sorted where point.date >= start {
-            let bucket = Int((point.date.timeIntervalSinceReferenceDate / (86_400 * Double(bucketDays))).rounded(.down))
-            if bucket == currentBucket, !result.isEmpty {
-                result[result.count - 1] = StoragePoint(date: point.date, used: point.used, bucketDays: bucketDays)
+        for point in points {
+            let key = bucket(point.date, days: days)
+            let sample = StoragePoint(date: point.date, used: point.used, bucketDays: days)
+            if key == currentBucket {
+                result[result.count - 1] = sample
             } else {
-                result.append(StoragePoint(date: point.date, used: point.used, bucketDays: bucketDays))
-                currentBucket = bucket
+                result.append(sample)
+                currentBucket = key
             }
         }
         return result
+    }
+
+    private func bucket(_ date: Date, days: Int) -> Int {
+        Int((date.timeIntervalSinceReferenceDate / (86_400 * Double(days))).rounded(.down))
     }
 }

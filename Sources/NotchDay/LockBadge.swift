@@ -344,6 +344,12 @@ final class LockBadge {
         playbackStaged = false
     }
 
+    func pauseHover() {
+        hoverTask?.cancel()
+        hoverTask = nil
+        state.hovering = false
+    }
+
     private func startHover() {
         hoverTask?.cancel()
         // The passive overlay cannot receive pointer events in the login window's session.

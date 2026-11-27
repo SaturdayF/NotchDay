@@ -96,7 +96,7 @@ final class ScreenStreamer {
     /// window changed.
     private var filter: SCContentFilter?
     private var filterKey: DepthFilter.Key?
-    private(set) var isStarted = false
+    private var isStarted = false
 
     /// Begins capturing, or does nothing if it is already running.
     func start() {

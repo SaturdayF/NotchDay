@@ -60,9 +60,6 @@ final class DepthRenderer {
     /// The picture a live stream writes into. `makePicture` builds its own
     /// texture instead, so only one of the two is in use at a time.
     private var liveTexture: MTLTexture?
-    private var liveSize: CGSize = .zero
-    private var liveScale: CGFloat = 0
-    private var isLiveSource = false
     /// The newest live frame, waiting for the next drawn frame to take it.
     private var pendingFrame: CapturedFrame?
     /// A held picture to start from, waiting for the same moment. A live
@@ -254,26 +251,18 @@ final class DepthRenderer {
         let height = Int((padded.height * pixelScale).rounded())
         guard width > 0, height > 0 else { return false }
 
-        if liveTexture == nil || liveSize != padded || liveScale != pixelScale {
-            let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-                pixelFormat: .bgra8Unorm_srgb,
-                width: width,
-                height: height,
-                mipmapped: true
-            )
-            // `renderTarget` is only there for the one clear that blacks the
-            // margin.
-            descriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
-            descriptor.storageMode = .private
-            guard let fresh = device.makeTexture(descriptor: descriptor) else { return false }
-            clearToBlack(fresh)
-            liveTexture = fresh
-            liveSize = padded
-            liveScale = pixelScale
-        }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm_srgb,
+            width: width,
+            height: height,
+            mipmapped: true
+        )
+        descriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
+        descriptor.storageMode = .private
+        guard let fresh = device.makeTexture(descriptor: descriptor), clearToBlack(fresh) else { return false }
+        liveTexture = fresh
 
         texture = nil
-        isLiveSource = true
         self.screenSize = screenSize
         self.pixelScale = pixelScale
         paddedOrigin = CGPoint(x: -padding, y: -padding)
@@ -317,7 +306,7 @@ final class DepthRenderer {
     /// overwrites it.
     @discardableResult
     func seed(image: CGImage) -> Bool {
-        guard isLiveSource, liveTexture != nil else { return false }
+        guard liveTexture != nil else { return false }
         let inset = Int((Self.paddingInPoints * pixelScale).rounded())
         let width = Int((screenSize.width * pixelScale).rounded())
         let height = Int((screenSize.height * pixelScale).rounded())
@@ -343,7 +332,7 @@ final class DepthRenderer {
     }
 
     func absorb(_ frame: CapturedFrame) {
-        guard isLiveSource, liveTexture != nil else { return }
+        guard liveTexture != nil else { return }
         pendingFrame = frame
         pendingSeed = nil
         // The texture object is the one the next pass reads, and the copy into
@@ -427,35 +416,23 @@ final class DepthRenderer {
         encoder.endEncoding()
     }
 
-    /// Frees the live picture.
-    func discardLive() {
-        pendingFrame = nil
-        pendingSeed = nil
-        if isLiveSource { texture = nil }
-        isLiveSource = false
-        liveTexture = nil
-        liveIsland = nil
-        liveSize = .zero
-        liveScale = 0
-    }
-
-    private func clearToBlack(_ target: MTLTexture) {
+    private func clearToBlack(_ target: MTLTexture) -> Bool {
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = target
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         guard let commands = queue.makeCommandBuffer(),
-              let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
+              let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return false }
         encoder.endEncoding()
         commands.commit()
-        commands.waitUntilCompleted()
+        // The first frame follows the clear on the same command queue.
+        return true
     }
 
     // MARK: - Still source
 
     func adopt(_ picture: PreparedPicture) {
-        isLiveSource = false
         texture = picture.texture
         // Without a tag the window server treats the drawable as sRGB and
         // converts it to the display space.
@@ -472,7 +449,10 @@ final class DepthRenderer {
     }
 
     func release() {
-        discardLive()
+        pendingFrame = nil
+        pendingSeed = nil
+        liveTexture = nil
+        liveIsland = nil
         texture = nil
         layer = nil
     }

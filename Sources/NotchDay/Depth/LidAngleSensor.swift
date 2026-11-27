@@ -31,26 +31,9 @@ final class LidAngleSensor {
             case .wholeDegrees: return 1
             }
         }
-
-        var describedName: String {
-            switch self {
-            case .hundredthsOfADegree: return "report 7 (0.01°)"
-            case .wholeDegrees: return "report 1 (1°)"
-            }
-        }
     }
 
-    /// What the last call to `angle()` saw. A failed read returns `nil` and
-    /// leaves the reason here.
-    struct ReadTrace {
-        var status: IOReturn = kIOReturnSuccess
-        var length: Int = 0
-        var bytes: [UInt8] = []
-        var rejectedDegrees: Double?
-    }
-
-    private(set) var lastRead = ReadTrace()
-    private(set) var resolution: Resolution?
+    private var resolution: Resolution?
     private var manager: IOHIDManager?
     private var device: IOHIDDevice?
     private var buffer = [UInt8](repeating: 0, count: 32)
@@ -72,28 +55,24 @@ final class LidAngleSensor {
     /// 0 means closed. A MacBook opens to roughly 130 degrees.
     func angle() -> Double? {
         guard let resolution else { return nil }
-        guard let bytes = read(reportID: resolution.reportID) else { return nil }
-        guard bytes.first == UInt8(resolution.reportID) else { return nil }
+        let length = read(reportID: resolution.reportID)
+        guard length > 0, buffer[0] == UInt8(resolution.reportID) else { return nil }
 
         let degrees: Double
         switch resolution {
         case .hundredthsOfADegree:
-            guard bytes.count >= 5 else { return nil }
-            let raw = UInt32(bytes[1])
-                | UInt32(bytes[2]) << 8
-                | UInt32(bytes[3]) << 16
-                | UInt32(bytes[4]) << 24
+            guard length >= 5 else { return nil }
+            let raw = UInt32(buffer[1])
+                | UInt32(buffer[2]) << 8
+                | UInt32(buffer[3]) << 16
+                | UInt32(buffer[4]) << 24
             degrees = Double(raw) / 100
         case .wholeDegrees:
-            guard bytes.count >= 3 else { return nil }
-            degrees = Double(UInt16(bytes[1]) | UInt16(bytes[2]) << 8)
+            guard length >= 3 else { return nil }
+            degrees = Double(UInt16(buffer[1]) | UInt16(buffer[2]) << 8)
         }
 
-        guard degrees >= 0, degrees <= 360 else {
-            lastRead.rejectedDegrees = degrees
-            return nil
-        }
-        return degrees
+        return degrees <= 360 ? degrees : nil
     }
 
     // MARK: - Device
@@ -128,22 +107,13 @@ final class LidAngleSensor {
         resolution = nil
     }
 
-    private func read(reportID: Int) -> [UInt8]? {
-        lastRead = ReadTrace()
-        guard let device else {
-            lastRead.status = kIOReturnNoDevice
-            return nil
-        }
+    private func read(reportID: Int) -> Int {
+        guard let device else { return 0 }
         var length = CFIndex(buffer.count)
         let result = buffer.withUnsafeMutableBufferPointer { pointer -> IOReturn in
             guard let base = pointer.baseAddress else { return kIOReturnBadArgument }
             return IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, CFIndex(reportID), base, &length)
         }
-        lastRead.status = result
-        lastRead.length = Int(length)
-        guard result == kIOReturnSuccess, length > 0 else { return nil }
-        let bytes = Array(buffer[0..<Int(length)])
-        lastRead.bytes = bytes
-        return bytes
+        return result == kIOReturnSuccess ? length : 0
     }
 }
