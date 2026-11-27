@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+if [[ $# -gt 1 || (${1:-} != "" && ${1:-} != --install) ]]; then
+    printf '用法: %s [--install]\n' "$0" >&2
+    exit 64
+fi
+
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 preview_dir="$project_dir/.codex/native-preview"
 build_dir="$preview_dir/build"
@@ -8,6 +13,22 @@ app_dir="$preview_dir/NotchDay.app"
 module_cache="$preview_dir/module-cache"
 
 mkdir -p "$preview_dir" "$module_cache"
+if [[ "${1:-}" == --install ]]; then
+    installed_app="/Applications/NotchDay.app"
+    staging="$(mktemp -d "$preview_dir/install.XXXXXX")"
+    app_dir="$staging/NotchDay.app"
+    install_complete=0
+    clean_install_staging() {
+        if [[ -e "$staging/previous" && "$install_complete" == 0 ]]; then
+            if [[ -e "$installed_app" ]] || ! mv "$staging/previous" "$installed_app"; then
+                printf '旧版本保留在 %s/previous\n' "$staging" >&2
+                return
+            fi
+        fi
+        rm -rf -- "$staging"
+    }
+    trap clean_install_staging EXIT
+fi
 export SWIFTPM_MODULECACHE_OVERRIDE="$module_cache"
 export CLANG_MODULE_CACHE_PATH="$module_cache"
 
@@ -55,7 +76,47 @@ fi
 install -d "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 install -m 644 "$project_dir/App/Info.plist" "$app_dir/Contents/Info.plist"
 install -m 644 "$compiled_icons/AppIcon.icns" "$compiled_icons/Assets.car" "$app_dir/Contents/Resources/"
+install -m 644 "$project_dir/App/Mac-Duo-LICENSE" "$project_dir/App/Mac-Duo-NOTICE" "$app_dir/Contents/Resources/"
 rm -f "$app_dir/Contents/Resources/NotchDay.icns"
 install -m 755 "$binary_dir/NotchDay" "$app_dir/Contents/MacOS/NotchDay"
 codesign --force --sign - "$app_dir"
-printf '%s\n' "$app_dir"
+codesign --verify --strict "$app_dir"
+
+if [[ "${1:-}" != --install ]]; then
+    printf '%s\n' "$app_dir"
+    exit
+fi
+
+if [[ -e "$installed_app" ]]; then
+    bundle_id="$(plutil -extract CFBundleIdentifier raw "$app_dir/Contents/Info.plist")"
+    if [[ "$(plutil -extract CFBundleIdentifier raw "$installed_app/Contents/Info.plist")" != "$bundle_id" ]]; then
+        printf '%s 已被其他应用占用。\n' "$installed_app" >&2
+        exit 1
+    fi
+    if diff -qr "$app_dir" "$installed_app" >/dev/null; then
+        open "$installed_app"
+        printf '%s\n' "$installed_app"
+        exit
+    fi
+fi
+
+installed_process='^/Applications/NotchDay[.]app/Contents/MacOS/NotchDay( |$)'
+if pgrep -f "$installed_process" >/dev/null; then
+    pkill -TERM -f "$installed_process"
+    for attempt in {1..30}; do
+        if ! pgrep -f "$installed_process" >/dev/null; then break; fi
+        sleep 0.1
+    done
+    if pgrep -f "$installed_process" >/dev/null; then
+        printf '正在运行的 NotchDay 尚未退出。\n' >&2
+        exit 1
+    fi
+fi
+
+if [[ -e "$installed_app" ]]; then
+    mv "$installed_app" "$staging/previous"
+fi
+mv "$app_dir" "$installed_app"
+open "$installed_app"
+install_complete=1
+printf '%s\n' "$installed_app"

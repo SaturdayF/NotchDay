@@ -4,13 +4,19 @@ import SwiftUI
 
 @MainActor
 final class NotchController: NSObject {
-    private let model = NotchModel()
-    private let calendar = CalendarFeed()
+    let model = NotchModel()
+    let calendar = CalendarFeed()
     private let activity = ActivityFeed()
     private let storage = StorageFeed()
     private let lockBadge = LockBadge()
     private var panel: NotchPanel?
-    private var settingsWindow: NSWindow?
+    private var hostingView: NSHostingView<NotchView>?
+    /// Set while the depth effect draws. The island is part of the warped
+    /// picture then, so its hit region no longer matches what is on screen.
+    private var depthActive = false
+    /// Opens the settings window on the given section.
+    var settingsPresenter: ((SettingsSection) -> Void)?
+    var depthSessionLockChanged: ((Bool) -> Void)?
     private var display: NotchDisplay?
     private var desktopPanelFollowsNotch = false
     private var globalPointerMonitor: Any?
@@ -110,7 +116,7 @@ final class NotchController: NSObject {
         self.display = display
         let panel = self.panel ?? makePanel()
         self.panel = panel
-        if sizingChanged || !(panel.contentView is NSHostingView<NotchView>) {
+        if hostingView == nil || sizingChanged {
             let view = NotchView(
                 model: model,
                 calendar: calendar,
@@ -122,7 +128,9 @@ final class NotchController: NSObject {
                 playbackChanged: { [weak self] in self?.updatePointer() },
                 selectPage: { [weak self] page in self?.selectPage(page) }
             )
-            panel.contentView = NSHostingView(rootView: view)
+            let hosting = NSHostingView(rootView: view)
+            hostingView = hosting
+            panel.contentView = hosting
         }
         if panel.frame != display.panelFrame { panel.setFrame(display.panelFrame, display: true, animate: false) }
         if !desktopPanelFollowsNotch, display.hasHardwareNotch {
@@ -181,7 +189,7 @@ final class NotchController: NSObject {
     }
 
     private func updatePointer() {
-        guard !systemLocked, !restoring, model.desktopWingsVisible,
+        guard !systemLocked, !restoring, !depthActive, model.desktopWingsVisible,
               let panel, let bounds = hitRegion() else { return }
         let containsPointer = bounds.contains(NSEvent.mouseLocation)
         let acceptsPointer = containsPointer || model.isSeeking
@@ -207,6 +215,7 @@ final class NotchController: NSObject {
         guard !systemLocked else { return }
         let playback = lockPlayback()
         systemLocked = true
+        depthSessionLockChanged?(true)
         restoring = false
         pendingRestore?.cancel()
         pendingLockHandoff?.cancel()
@@ -256,6 +265,7 @@ final class NotchController: NSObject {
         pendingLockHandoff?.cancel()
         retireDesktopForLock()
         systemLocked = false
+        depthSessionLockChanged?(false)
         lockedWatch?.cancel()
         restoring = true
         pendingRestore?.cancel()
@@ -424,28 +434,49 @@ final class NotchController: NSObject {
         suppressHover = true
         if model.mode == .expanded { setMode(.compact) }
         calendar.refresh()
-
-        let window = settingsWindow ?? makeSettingsWindow()
-        settingsWindow = window
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
+        settingsPresenter?(.notch)
     }
 
-    private func makeSettingsWindow() -> NSWindow {
-        let controller = NSHostingController(rootView: NotchSettingsView(
-            calendar: calendar,
-            model: model,
-            toggleLockPreview: { [weak self] in self?.toggleLockPreview() }
-        ))
-        let window = NSWindow(contentViewController: controller)
-        window.title = "NotchDay 设置"
-        window.styleMask = [.titled, .closable]
-        window.isReleasedWhenClosed = false
-        window.center()
-        return window
+    // MARK: - Depth effect
+
+    /// Capture the actual island, including its transparent edges. The
+    /// window server does not always expose its private Space to ScreenCaptureKit.
+    func captureDepthIsland(on screen: NSScreen) -> DepthIslandPicture? {
+        guard !systemLocked, !restoring, let panel, panel.isVisible,
+              let host = hostingView, let hitRegion = hitRegion(),
+              screen.frame.contains(CGPoint(x: panel.frame.midX, y: panel.frame.midY)) else { return nil }
+        let rect = hitRegion.insetBy(dx: -16, dy: -16)
+            .intersection(panel.frame).intersection(screen.frame).integral
+        guard !rect.isEmpty else { return nil }
+        let windowRect = panel.convertFromScreen(rect)
+        let localRect = host.convert(windowRect, from: nil)
+        host.layoutSubtreeIfNeeded()
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: localRect) else { return nil }
+        host.cacheDisplay(in: localRect, to: bitmap)
+        guard let image = bitmap.cgImage else { return nil }
+        return DepthIslandPicture(
+            image: image,
+            frame: rect.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY)
+        )
     }
 
-    @objc private func toggleLockPreview() {
+    func setDepthIslandComposited(_ composited: Bool) {
+        guard composited != depthActive else { return }
+        depthActive = composited
+        panel?.alphaValue = composited ? 0 : 1
+        if composited {
+            pendingHover?.cancel()
+            if model.mode == .expanded { collapseExplicitly() }
+            model.isHovering = false
+            model.isSeeking = false
+            panel?.ignoresMouseEvents = true
+        } else {
+            suppressHover = false
+            updatePointer()
+        }
+    }
+
+    @objc func toggleLockPreview() {
         guard !systemLocked, !restoring, model.desktopWingsVisible,
               model.mode != .locked || model.lockPreview == .locked else { return }
         suppressHover = true

@@ -18,6 +18,10 @@ enum SystemLinks {
         openSettings("com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")
     }
 
+    static func openScreenRecordingPrivacy() {
+        openSettings("com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture")
+    }
+
     static func openSoundOutput() {
         openSettings("com.apple.Sound-Settings.extension")
     }

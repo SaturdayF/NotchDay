@@ -30,7 +30,11 @@
 	<string>NotchDay 读取系统日历，在灵动岛内显示今天和明天的日程。</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>NotchDay 读取今天和明天到期的未完成提醒事项，并在灵动岛的日程卡片中显示。</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>NotchDay 读取内置显示器的画面，在合盖时实时绘制景深效果。画面仅在本机内存中处理。</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NotchApplication</string>
 </dict>
 </plist>

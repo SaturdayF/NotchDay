@@ -28,7 +28,7 @@
 
 1. 从 [GitHub Releases](https://github.com/SaturdayF/NotchDay/releases) 下载 ZIP，解压后打开 `NotchDay.app`。发布包采用本地临时签名。macOS 如阻止运行，可以按下方步骤从源码本机构建。
 2. 将鼠标移到刘海上或点击刘海展开。用左侧圆点或纵向滚轮切换卡片。日程内容超过半屏时，滚轮优先滚动当前日程列表。
-3. 右键刘海打开设置，连接系统服务、调整卡片的显隐与顺序、预览白锁或退出。退出后重新打开 `NotchDay.app` 即可启动。运行时隐藏 Dock 和菜单栏图标。
+3. 右键刘海打开设置。在「NotchDay」分区管理卡片和锁屏预览，在「Mac Duo」分区设置合盖景深。退出后重新打开 `NotchDay.app` 即可启动。
 
 | 卡片 | 功能 |
 | --- | --- |
@@ -37,6 +37,7 @@
 | **日程** | 分栏显示今天和明天的日历事件，以及这两天到期的未完成提醒事项。点击行可打开对应的系统 App。 |
 | **储存空间** | 显示已用与总容量，以及 1 天到全部的用量趋势。打开卡片时立刻读一次容量，之后每小时记录一条；悬停曲线可查看每个记录点。点击标题可打开系统储存空间设置。 |
 | **锁屏与桌面** | 锁屏时，音乐信息淡出后白锁滑入。解锁时锁扣打开，白锁向右收回并淡出。桌面切换沿用同一个灵动岛窗口，并交由 macOS 处理其位置。 |
+| **Mac Duo** | 合盖时，内置屏画面和灵动岛一起向屏幕下缘倾斜、模糊并压暗。支持实时与静态模式，可在设置中预览。需要兼容的 MacBook 铰链角度传感器。 |
 
 ## 数据和权限
 
@@ -46,6 +47,7 @@
 | 日历、提醒事项 | 在日程卡片分别选择「连接日历」和「连接提醒事项」，按 macOS 提示授权。两种权限可独立授予。 |
 | App 与网站活动 | 如果卡片提示无法读取，点「打开完全磁盘访问」并为 NotchDay 授权，再选择「重新读取」。 |
 | 储存空间 | 不需要授权。只读取启动卷的总量与可用量，并在本机记录每小时用量。 |
+| Mac Duo | 在设置窗口的「Mac Duo」分区点击「授权…」，允许屏幕录制。画面仅在本机内存中处理。关闭「实时渲染」后，合盖期间使用一张静态画面。 |
 
 活动页只读查询本机的 `~/Library/Application Support/Knowledge/knowledgeC.db`。它会合并重叠的使用区间，并按本地日历日与小时统计。CoreDuet 数据的字段、记录范围和更新时间由 macOS 决定，因此可能和系统屏幕时间报告有差别。项目在本机读取和汇总这些数据。
 
@@ -59,6 +61,7 @@
 | **日历与提醒事项** | 使用 EventKit 分别请求权限。提醒事项在 EventKit 回调队列中转换成可传递的数据，再在主线程更新卡片。 |
 | **使用时间** | 使用 SQLite3 只读打开 CoreDuet 数据库，按版本检测可用字段。查询在后台执行，结果在活动页短时缓存。 |
 | **储存空间** | 用 `URLResourceValues` 读取总量与可用量，按小时把已用字节追加到按月切分的 CSV，区间聚合在后台执行。 |
+| **合盖景深** | 通过 IOHID 读取铰链角度。合盖时用 ScreenCaptureKit 采集画面，Metal 在同一次投影中处理屏幕与灵动岛。合盖效果结束后释放画面和覆盖层。 |
 | **构建与图标** | Swift Package Manager 构建可执行文件，Xcode 的 `actool` 编译 App 图标资源，脚本打包并对本地应用签名。 |
 
 ## 从源码构建
@@ -68,8 +71,11 @@
 ```sh
 git clone https://github.com/SaturdayF/NotchDay.git
 cd NotchDay
-./Scripts/build-app.sh
-open .codex/native-preview/NotchDay.app
+./Scripts/build-app.sh --install
 ```
 
+`--install` 更新并启动 `/Applications/NotchDay.app`。省略该选项时，此脚本只构建项目内的预览包。
+
 交互设计参考 [Atoll](https://github.com/Ebullioscopic/Atoll)。SkyLight 窗口接口参考 [SkyLightWindow](https://github.com/Lakr233/SkyLightWindow)。仓库保留了早期的 [浏览器交互原型](docs/design/v3/interaction-preview.html)。
+
+合盖景深源自 Makito 的 Apache-2.0 项目 [Mac Duo](https://github.com/sumimakito/Mac-Duo)。发布包内附有 [许可证](App/Mac-Duo-LICENSE)和[归属说明](App/Mac-Duo-NOTICE)。
